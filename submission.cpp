@@ -98,6 +98,12 @@ cv::Mat DocumentScanner::rectify(const cv::Mat& src)
 	//cv::Mat1f histS;
 	//cv::reduce(histSV, histS, 1, cv::REDUCE_SUM);
 
+	int maxIdx[2];
+	cv::minMaxIdx(histSV, nullptr, nullptr, nullptr, maxIdx);
+	int dominantSat = maxIdx[0];
+	int dominantVal = maxIdx[1];
+
+
 }
 
 
