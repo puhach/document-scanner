@@ -90,6 +90,14 @@ cv::Mat DocumentScanner::rectify(const cv::Mat& src)
 	cv::imshow("test", srcChannelsHSV[2]);
 	cv::waitKey();
 
+	// Compute the 2D histogram of saturation-value pairs
+	cv::Mat1f histSV;
+	cv::calcHist(srcChannelsHSV, std::vector{ 1, 2 }, cv::Mat(), histSV, std::vector{ 256, 256 }, std::vector{ 0.0f, 256.0f, 0.0f, 256.0f });
+	//cv::calcHist(std::vector{ srcChannelsHSV }, std::vector{ 0, 2 }, cv::Mat(), histSV, std::vector{ 180, 256 }, std::vector{ 0.0f, 180.0f, 0.0f, 256.0f });
+
+	//cv::Mat1f histS;
+	//cv::reduce(histSV, histS, 1, cv::REDUCE_SUM);
+
 }
 
 
