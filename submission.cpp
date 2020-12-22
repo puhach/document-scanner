@@ -103,6 +103,12 @@ cv::Mat DocumentScanner::rectify(const cv::Mat& src)
 	int dominantSat = maxIdx[0];
 	int dominantVal = maxIdx[1];
 
+	cv::Mat3b devMat;
+	cv::absdiff(srcHSV, cv::Scalar(0, dominantSat, dominantVal), devMat);
+	//cv::Scalar meanDev = cv::mean(devMat);
+	cv::Scalar meanDev = cv::mean(devMat);
+	//meanDev[0] = std::sqrt(meanDev[0]);
+
 
 }
 
