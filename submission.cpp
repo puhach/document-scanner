@@ -33,7 +33,8 @@ public:
 	bool prepare(const cv::Mat& src, const cv::String& windowName, std::vector<cv::Point> &quad);
 
 private:
-
+	std::vector<std::vector<cv::Point>> candidates;
+	int bestCandidate;
 };	// DocumentScanner
 
 bool DocumentScanner::prepare(const cv::Mat& src, const cv::String& windowName, std::vector<cv::Point>& quad)
@@ -53,7 +54,7 @@ bool DocumentScanner::prepare(const cv::Mat& src, const cv::String& windowName, 
 	cv::split(srcHSV, srcChannelsHSV);
 
 
-	std::vector<std::vector<cv::Point>> candidates;
+	this->candidates.clear();
 
 	for (int i = 1; i < srcChannelsHSV.size(); ++i)
 		//for (int i = 1; i <= 1; ++i)
@@ -98,12 +99,38 @@ bool DocumentScanner::prepare(const cv::Mat& src, const cv::String& windowName, 
 					|| approxArea >= 0.99 * channel.rows * channel.cols || !cv::isContourConvex(contourApprox))
 					continue;
 								
-				candidates.push_back(contourApprox);
+				this->candidates.push_back(contourApprox);
 			}	// for each contour
 		}	// threshLevel
 	}	// for i channel
 
+	if (this->candidates.empty())
+		this->candidates.push_back(std::vector<cv::Point>{ {0, 0}, { 0, src.rows - 1 }, { 0, src.cols - 1 }, {src.rows-1, src.cols-1} });
 	
+	std::vector<double> rank(this->candidates.size(), 0);
+	int bestCandIdx = 0;
+	for (int i = 0; i < this->candidates.size(); ++i)
+	{
+		for (int j = 0; j < this->candidates.size(); ++j)
+		{
+			if (i == j)
+				continue;
+
+			double maxDist = 0;
+			for (int v = 0; v < 4; ++v)
+			{
+				double d = cv::norm(this->candidates[j][v] - this->candidates[i][v]);
+				maxDist = std::max(d, maxDist);
+			}	// v
+
+			rank[i] += std::exp(-maxDist);
+		}	// j
+
+		if (rank[i] > rank[bestCandIdx])
+			bestCandIdx = i;
+	}	// i
+
+
 }	// prepare
 
 // TODO: add a parameter to specify the algorithm
