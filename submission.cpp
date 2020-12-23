@@ -38,7 +38,72 @@ private:
 
 bool DocumentScanner::prepare(const cv::Mat& src, const cv::String& windowName, std::vector<cv::Point>& quad)
 {
+	CV_Assert(src.depth() == CV_8U);
 
+	cv::Mat srcHSV;
+	cv::cvtColor(src, srcHSV, cv::COLOR_BGR2HSV);
+
+	// Downscale and upscale the image to filter out useless details
+	cv::Mat pyr;
+	cv::pyrDown(srcHSV, pyr, cv::Size(srcHSV.cols / 2, srcHSV.rows / 2));
+	cv::pyrUp(pyr, srcHSV, srcHSV.size());
+
+	//cv::Mat1b srcChannelsHSV[3];
+	std::vector<cv::Mat1b> srcChannelsHSV;
+	cv::split(srcHSV, srcChannelsHSV);
+
+
+	std::vector<std::vector<cv::Point>> candidates;
+
+	for (int i = 1; i < srcChannelsHSV.size(); ++i)
+		//for (int i = 1; i <= 1; ++i)
+	{
+		cv::Mat1b channel = srcChannelsHSV[i];
+
+		constexpr int threshLevels = 10;
+
+		for (int threshLevel = 1; threshLevel <= threshLevels; ++threshLevel)
+		{
+			cv::Mat1b channelBin;
+			cv::threshold(channel, channelBin, threshLevel * 255.0 / (threshLevels + 1), 255,
+				i == 1 ? cv::THRESH_BINARY_INV : cv::THRESH_BINARY);	// for a value channel use another threshold
+
+			//cv::dilate(channelBin, channelBin, cv::getStructuringElement(cv::MORPH_ELLIPSE, cv::Size(5, 5)));
+			cv::morphologyEx(channelBin, channelBin, cv::MORPH_CLOSE, cv::getStructuringElement(cv::MORPH_ELLIPSE, cv::Size(5, 5)));
+
+			cv::imshow("test", channelBin);
+			cv::waitKey();
+
+			double minVal, maxVal;
+			cv::minMaxLoc(channelBin, &minVal, &maxVal);
+			if (minVal > 254 || maxVal < 1)	// all black or all white
+				continue;
+
+			std::vector<std::vector<cv::Point>> contours;
+			cv::findContours(channelBin, contours, cv::RETR_EXTERNAL, cv::CHAIN_APPROX_SIMPLE);
+			//cv::findContours(channelBin, contours, cv::RETR_LIST, cv::CHAIN_APPROX_SIMPLE);
+			cv::Mat tmp = src.clone();
+			cv::drawContours(tmp, contours, -1, cv::Scalar(255, 0, 0), 4);
+			cv::imshow("test", tmp);
+			cv::waitKey();
+
+			for (auto& contour : contours)
+			{
+				std::vector<cv::Point> contourApprox;
+				cv::approxPolyDP(contour, contourApprox, 0.02 * cv::arcLength(contour, true), true);
+
+				double approxArea = cv::contourArea(contourApprox, false);
+
+				if (contourApprox.size() != 4 || approxArea < 0.5 * channel.rows * channel.cols
+					|| approxArea >= 0.99 * channel.rows * channel.cols || !cv::isContourConvex(contourApprox))
+					continue;
+								
+				candidates.push_back(contourApprox);
+			}	// for each contour
+		}	// threshLevel
+	}	// for i channel
+
+	
 }	// prepare
 
 // TODO: add a parameter to specify the algorithm
