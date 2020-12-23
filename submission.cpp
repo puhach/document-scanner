@@ -39,8 +39,9 @@ private:
 	void drawSelection();
 
 	cv::Mat src, srcDecorated;
+	cv::String windowName;
 	std::vector<std::vector<cv::Point>> candidates;
-	int bestCandIdx;
+	int bestCandIdx;	
 };	// DocumentScanner
 
 void DocumentScanner::onSelectionChanged(int pos, void* userData)
@@ -49,11 +50,22 @@ void DocumentScanner::onSelectionChanged(int pos, void* userData)
 	scanner->drawSelection();
 }
 
+void DocumentScanner::drawSelection()
+{
+	CV_Assert(this->bestCandIdx >= 0 && this->bestCandIdx < this->candidates.size());
+	
+	this->src.copyTo(this->srcDecorated);
+	cv::polylines(this->srcDecorated, this->candidates[this->bestCandIdx], true, cv::Scalar(0,255,0), 4, cv::LINE_AA);
+
+	cv::imshow(this->windowName, this->srcDecorated);
+	cv::waitKey(10);
+}
 
 bool DocumentScanner::prepare(const cv::Mat& src, const cv::String& windowName, std::vector<cv::Point>& quad)
 {
 	CV_Assert(src.depth() == CV_8U);
 	this->src = src;
+	this->windowName = windowName;
 
 	cv::Mat srcHSV;
 	cv::cvtColor(src, srcHSV, cv::COLOR_BGR2HSV);
@@ -86,8 +98,8 @@ bool DocumentScanner::prepare(const cv::Mat& src, const cv::String& windowName, 
 			//cv::dilate(channelBin, channelBin, cv::getStructuringElement(cv::MORPH_ELLIPSE, cv::Size(5, 5)));
 			cv::morphologyEx(channelBin, channelBin, cv::MORPH_CLOSE, cv::getStructuringElement(cv::MORPH_ELLIPSE, cv::Size(5, 5)));
 
-			cv::imshow("test", channelBin);
-			cv::waitKey();
+			//cv::imshow("test", channelBin);
+			//cv::waitKey();
 
 			double minVal, maxVal;
 			cv::minMaxLoc(channelBin, &minVal, &maxVal);
@@ -97,10 +109,11 @@ bool DocumentScanner::prepare(const cv::Mat& src, const cv::String& windowName, 
 			std::vector<std::vector<cv::Point>> contours;
 			cv::findContours(channelBin, contours, cv::RETR_EXTERNAL, cv::CHAIN_APPROX_SIMPLE);
 			//cv::findContours(channelBin, contours, cv::RETR_LIST, cv::CHAIN_APPROX_SIMPLE);
-			cv::Mat tmp = src.clone();
+
+			/*cv::Mat tmp = src.clone();
 			cv::drawContours(tmp, contours, -1, cv::Scalar(255, 0, 0), 4);
 			cv::imshow("test", tmp);
-			cv::waitKey();
+			cv::waitKey();*/
 
 			for (auto& contour : contours)
 			{
@@ -145,8 +158,16 @@ bool DocumentScanner::prepare(const cv::Mat& src, const cv::String& windowName, 
 	}	// i
 
 	cv::namedWindow(windowName, cv::WINDOW_NORMAL);
-	cv::createTrackbar("Selection", windowName, this->bestCandIdx, this->candidates.size() - 1, &DocumentScanner::onSelectionChanged, this);
-	
+	cv::createTrackbar("Selection", windowName, &this->bestCandIdx
+		, static_cast<int>(this->candidates.size()) - 1
+		, &DocumentScanner::onSelectionChanged, this);
+
+	drawSelection();
+
+	cv::imshow(windowName, this->srcDecorated);
+	cv::waitKey();
+
+	return false;
 }	// prepare
 
 // TODO: add a parameter to specify the algorithm
@@ -893,11 +914,11 @@ int main(int argc, char* argv[])
 		//cv::Mat imSrc = cv::imread("./images/sunglass.png", cv::IMREAD_UNCHANGED);	// TODO: not sure what reading mode should be used
 
 		DocumentScanner scanner;
-		//scanner.rectify(imSrc);		// TODO: perhaps, pass a file name as a window title
+		//scanner.rectify(imSrc);		
 		std::vector<cv::Point> quad;
-		if (scanner.prepare(src, windowName, quad))
+		if (scanner.prepare(imSrc, "my", quad))	// TODO: perhaps, pass a file name as a window title
 		{
-			scanner.rectify(src, quad, windowName);
+			scanner.rectify(imSrc, quad, "my");
 		}
 
 		return 0;
