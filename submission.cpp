@@ -20,10 +20,392 @@ public:
 	cv::Mat rectify2(const cv::Mat& src);
 	cv::Mat rectify3(const cv::Mat& src);
 	cv::Mat rectify4(const cv::Mat& src);
-	cv::Mat rectify(const cv::Mat& src);
-
+	cv::Mat rectify5(const cv::Mat& src);
 	cv::Mat rectify6(const cv::Mat& src);
+	cv::Mat rectify7(const cv::Mat& src);
+	cv::Mat rectify8(const cv::Mat& src);
+	cv::Mat rectify9(const cv::Mat& src);
+
+	cv::Mat rectify10(const cv::Mat& src);
+
+	cv::Mat rectify(const cv::Mat& src, std::vector<cv::Point> &quad, const cv::String &windowName);
+
+	bool prepare(const cv::Mat& src, const cv::String& windowName, std::vector<cv::Point> &quad);
+
+private:
+
 };	// DocumentScanner
+
+bool DocumentScanner::prepare(const cv::Mat& src, const cv::String& windowName, std::vector<cv::Point>& quad)
+{
+
+}	// prepare
+
+// TODO: add a parameter to specify the algorithm
+cv::Mat DocumentScanner::rectify(const cv::Mat& src, std::vector<cv::Point> &quad, const cv::String &windowName)
+{
+	cv::namedWindow(windowName, cv::WINDOW_NORMAL);
+
+	
+
+	// TODO: warp perspective
+	
+	return src;
+}	// rectify
+
+cv::Mat DocumentScanner::rectify10(const cv::Mat& src)
+{
+	cv::namedWindow("test", cv::WINDOW_NORMAL);
+
+	CV_Assert(src.depth() == CV_8U);
+
+	cv::Mat srcHSV;
+	cv::cvtColor(src, srcHSV, cv::COLOR_BGR2HSV);
+
+	// Downscale and upscale the image to filter out useless details
+	cv::Mat pyr;
+	cv::pyrDown(srcHSV, pyr, cv::Size(srcHSV.cols / 2, srcHSV.rows / 2));
+	cv::pyrUp(pyr, srcHSV, srcHSV.size());
+
+	//cv::Mat1b srcChannelsHSV[3];
+	std::vector<cv::Mat1b> srcChannelsHSV;
+	cv::split(srcHSV, srcChannelsHSV);
+
+
+	cv::imshow("test", srcChannelsHSV[0]);
+	cv::waitKey();
+	cv::imshow("test", srcChannelsHSV[1]);
+	cv::waitKey();
+	cv::imshow("test", srcChannelsHSV[2]);
+	cv::waitKey();
+
+	std::vector<std::vector<cv::Point>> candidates;
+
+	for (int i = 1; i < srcChannelsHSV.size(); ++i)
+	//for (int i = 1; i <= 1; ++i)
+	{
+		cv::Mat1b channel = srcChannelsHSV[i];
+
+		constexpr int threshLevels = 10;
+
+		for (int threshLevel = 1; threshLevel <= threshLevels; ++threshLevel)
+		{
+			cv::Mat1b channelBin;
+			cv::threshold(channel, channelBin, threshLevel*255.0/(threshLevels+1), 255, 
+				i==1 ? cv::THRESH_BINARY_INV : cv::THRESH_BINARY);	// for a value channel use another threshold
+			
+			//cv::dilate(channelBin, channelBin, cv::getStructuringElement(cv::MORPH_ELLIPSE, cv::Size(5, 5)));
+			cv::morphologyEx(channelBin, channelBin, cv::MORPH_CLOSE, cv::getStructuringElement(cv::MORPH_ELLIPSE, cv::Size(5,5)));
+
+			cv::imshow("test", channelBin);
+			cv::waitKey();
+
+			double minVal, maxVal;
+			cv::minMaxLoc(channelBin, &minVal, &maxVal);
+			if (minVal > 254 || maxVal < 1)	// all black or all white
+				continue;
+
+			std::vector<std::vector<cv::Point>> contours;
+			cv::findContours(channelBin, contours, cv::RETR_EXTERNAL, cv::CHAIN_APPROX_SIMPLE);
+			//cv::findContours(channelBin, contours, cv::RETR_LIST, cv::CHAIN_APPROX_SIMPLE);
+			cv::Mat tmp = src.clone();
+			cv::drawContours(tmp, contours, -1, cv::Scalar(255,0,0), 4);
+			cv::imshow("test", tmp);
+			cv::waitKey();
+
+			for (auto& contour : contours)
+			{
+				std::vector<cv::Point> contourApprox;
+				cv::approxPolyDP(contour, contourApprox, 0.02 * cv::arcLength(contour, true), true);
+
+				double approxArea = cv::contourArea(contourApprox, false);
+
+				if (contourApprox.size() != 4 || approxArea < 0.5 * channel.rows * channel.cols 
+					|| approxArea >= 0.99*channel.rows*channel.cols || !cv::isContourConvex(contourApprox))
+						continue;
+
+				/*long long dx = std::max(std::abs(contourApprox[0].x - contourApprox[1].x), std::abs(contourApprox[0].x - contourApprox[1].x));
+				long long dy = std::max(std::abs(contourApprox[1].y - contourApprox[1].y), std::abs(contourApprox[0].y - contourApprox[1].y));
+
+				if (dx * dy == 1LL * channel.rows * channel.cols)
+					continue;*/
+
+				candidates.push_back(contourApprox);
+			}	// for each contour
+		}	// threshLevel
+	}	// for i channel
+
+	if (candidates.empty())
+		return src;
+
+	cv::Mat srcCopy = src.clone();
+	//cv::drawContours(srcCopy, candidates, -1, cv::Scalar(0, 255, 0), 2);
+	cv::Scalar colors[] = { {255,0,0}, {0,255,0}, {0,0,255} };
+	for (int i = 0; i < candidates.size(); ++i)
+	{
+		//cv::drawContours(srcCopy, candidates, i, cv::Scalar(10*i/256, 64*i%256, 32*i%256), 5, cv::LINE_AA, cv::noArray(), 0);
+		cv::polylines(srcCopy, candidates[i], true, colors[i%3], 4);
+	}
+	cv::imshow("test", srcCopy);
+	cv::waitKey();
+
+	std::vector<double> rank(candidates.size(), 0);
+	int bestCandIdx = 0;
+	for (int i = 0; i < candidates.size(); ++i)
+	{
+		for (int j = 0; j < candidates.size(); ++j)
+		{
+			if (i == j)
+				continue;
+
+			double maxDist = 0;
+			for (int v = 0; v < 4; ++v)
+			{
+				double d = cv::norm(candidates[j][v] - candidates[i][v]);
+				maxDist = std::max(d, maxDist);
+			}	// v
+
+			rank[i] += std::exp(-maxDist);			
+		}	// j
+
+		if (rank[i] > rank[bestCandIdx])
+			bestCandIdx = i;
+	}	// i
+
+	/*
+	std::vector<int> rank(candidates.size(), 0);
+	int bestCandIdx = 0;
+	for (int i = 0; i < candidates.size(); ++i)
+	{
+		for (int j = 0; j < candidates.size(); ++j)
+		{
+			if (i == j)
+				continue;
+
+			double maxDist = 0;
+			for (int v = 0; v<4; ++v)
+			{
+				double d = cv::norm(candidates[j][v] - candidates[i][v]);
+
+				maxDist = std::max(d, maxDist);
+			}	// v
+
+			if (maxDist < 10)
+			{
+				++rank[i];
+				if (rank[i] > rank[bestCandIdx])
+					bestCandIdx = i;
+			}
+		}	// j
+	}	// i
+	*/
+
+	srcCopy = src.clone();
+	cv::polylines(srcCopy, candidates[bestCandIdx], true, cv::Scalar(0, 255, 0), 2, cv::LINE_AA);
+	cv::imshow("test", srcCopy);
+	cv::waitKey();
+
+	/*
+	for (int v = 0; v < 4; ++v)
+	{
+		std::vector<int> xv, yv;
+		for (const auto& cand : candidates)
+		{
+			xv.push_back(cand[v].x);
+			yv.push_back(cand[v].y);
+		}	// cand
+
+		//std::sort(xv.begin(), xv.end());
+		//std::sort(yv.begin(), yv.end());
+		auto xvMinMax = std::minmax_element(xv.begin(), xv.end());
+		auto yvMinMax = std::minmax_element(yv.begin(), yv.end());
+
+		constexpr int step = 5;
+		std::vector<int> xbuckets((*xvMinMax.second - *xvMinMax.first)/step + 1, 0);				
+		for (int x : xv)
+		{
+			++xbuckets[(x - *xvMinMax.first) / step];
+		}
+
+		std::vector<int> ybuckets((*yvMinMax.second - *yvMinMax.first) / step + 1, 0);
+		for (int y : yv)
+		{
+			++ybuckets[(y - *yvMinMax.second) / step];
+		}
+
+		auto xbMaxIt = std::max_element(xbuckets.begin(), xbuckets.end());
+		auto 
+	}	// v
+	*/
+
+	return srcCopy;
+}
+
+cv::Mat DocumentScanner::rectify9(const cv::Mat& src)
+{
+	cv::namedWindow("test", cv::WINDOW_NORMAL);
+
+	CV_Assert(src.depth() == CV_8U);
+
+	cv::Mat srcHSV;
+	cv::cvtColor(src, srcHSV, cv::COLOR_BGR2HSV);
+
+	//cv::Mat1b srcChannelsHSV[3];
+	std::vector<cv::Mat1b> srcChannelsHSV;
+	cv::split(srcHSV, srcChannelsHSV);
+
+	cv::imshow("test", srcChannelsHSV[0]);
+	cv::waitKey();
+	cv::imshow("test", srcChannelsHSV[1]);
+	cv::waitKey();
+	cv::imshow("test", srcChannelsHSV[2]);
+	cv::waitKey();
+
+	/*
+	std::vector<std::vector<cv::Point>> contours;
+	std::vector<cv::Vec4i> hierarchy;
+	cv::findContours(srcChannelsHSV[1], contours, hierarchy, cv::RETR_TREE, cv::CHAIN_APPROX_SIMPLE);
+
+	cv::Mat srcCopy = src.clone();
+	cv::drawContours(srcCopy, contours, -1, cv::Scalar(0, 255, 0), 2, cv::LINE_AA, hierarchy);
+	cv::imshow("test", srcCopy);
+	cv::waitKey();
+	*/
+
+	cv::Mat srcBin;
+	cv::threshold(srcChannelsHSV[1], srcBin, 50, 255, cv::THRESH_BINARY_INV);
+	cv::imshow("test", srcBin);
+	cv::waitKey();
+
+	cv::Mat srcCopy = src.clone();
+	std::vector<cv::Vec2f> lines;
+	cv::HoughLines(srcBin, lines, 1, CV_PI / 180, 1500);
+	for (auto& line : lines)
+	{
+		std::cout << line << std::endl;
+
+		float rho = line[0], theta = line[1];
+		cv::Point pt1, pt2;
+		double a = cos(theta), b = sin(theta);
+		double x0 = a * rho, y0 = b * rho;
+		pt1.x = cvRound(x0 + 1000 * (-b));
+		pt1.y = cvRound(y0 + 1000 * (a));
+		pt2.x = cvRound(x0 - 1000 * (-b));
+		pt2.y = cvRound(y0 - 1000 * (a));
+		cv::line(srcCopy, pt1, pt2, cv::Scalar(0, 0, 255), 3, cv::LINE_AA);
+	}
+
+	cv::imshow("test", srcCopy);
+	cv::waitKey();
+	return srcCopy;
+}
+
+cv::Mat DocumentScanner::rectify8(const cv::Mat& src)
+{
+	cv::namedWindow("test", cv::WINDOW_NORMAL);
+
+	CV_Assert(src.depth() == CV_8U);
+
+	cv::Mat srcHSV;
+	cv::cvtColor(src, srcHSV, cv::COLOR_BGR2HSV);
+
+	//cv::Mat1b srcChannelsHSV[3];
+	std::vector<cv::Mat1b> srcChannelsHSV;
+	cv::split(srcHSV, srcChannelsHSV);
+
+	cv::imshow("test", srcChannelsHSV[0]);
+	cv::waitKey();
+	cv::imshow("test", srcChannelsHSV[1]);
+	cv::waitKey();
+	cv::imshow("test", srcChannelsHSV[2]);
+	cv::waitKey();
+
+	std::vector<cv::Point2d> corners;
+	cv::goodFeaturesToTrack(srcChannelsHSV[1], corners, 4, 0.1, 100, cv::noArray(), 3, false);
+
+	cv::Mat srcCopy = src.clone();
+	for (auto& p : corners)
+	{
+		cv::circle(srcCopy, p, 5, cv::Scalar(0, 255, 0), -1);
+	}
+
+	cv::imshow("test", srcCopy);
+	cv::waitKey();
+
+	return srcCopy;
+}
+
+cv::Mat DocumentScanner::rectify7(const cv::Mat& src)
+{
+	cv::namedWindow("test", cv::WINDOW_NORMAL);
+
+	CV_Assert(src.depth() == CV_8U);
+
+	cv::Mat srcHSV;
+	cv::cvtColor(src, srcHSV, cv::COLOR_BGR2HSV);
+
+	//cv::Mat1b srcChannelsHSV[3];
+	std::vector<cv::Mat1b> srcChannelsHSV;
+	cv::split(srcHSV, srcChannelsHSV);
+
+	cv::imshow("test", srcChannelsHSV[0]);
+	cv::waitKey();
+	cv::imshow("test", srcChannelsHSV[1]);
+	cv::waitKey();
+	cv::imshow("test", srcChannelsHSV[2]);
+	cv::waitKey();
+
+	cv::Mat gradx, grady;
+	cv::Sobel(srcChannelsHSV[1], gradx, CV_16S, 1, 0);
+	cv::Sobel(srcChannelsHSV[1], grady, CV_16S, 0, 1);
+
+	cv::Mat gradxf, gradyf;
+	gradx.convertTo(gradxf, CV_32F);
+	grady.convertTo(gradyf, CV_32F);
+
+	//cv::Mat gradx2 = gradxf.mul(gradxf);
+	//cv::Mat grady2 = gradyf.mul(gradyf);
+	////cv::Mat mag2 = gradx2 + grady2;
+	//cv::Mat mag2;
+	//cv::add(gradx2, grady2, mag2, cv::Mat(), CV_32F);
+	//cv::Mat mag1;
+	//cv::sqrt(mag2, mag1);
+	
+	cv::Mat mag;
+	cv::magnitude(gradxf, gradyf, mag);
+
+	/*cv::Mat diff;
+	cv::absdiff(mag1, mag2, diff);
+	cv::imshow("test", diff);
+	cv::waitKey();*/
+
+	/*cv::Scalar meanx, devx, meany, devy;
+	cv::meanStdDev(gradx, meanx, devx);
+	cv::meanStdDev(grady, meany, devy);*/
+	cv::Scalar mean, dev;
+	cv::meanStdDev(mag, mean, dev);
+
+	cv::Mat edges;
+	////cv::Canny(srcChannelsHSV[1], edges, dominantSat, dominantSat + meanDev[0]);
+	cv::Canny(gradx, grady, edges, mean[0], mean[0]+dev[0]);
+
+	cv::imshow("test", edges);
+	cv::waitKey();
+
+	cv::Mat srcCopy = src.clone();
+	std::vector<cv::Vec4i> lines;
+	cv::HoughLinesP(edges, lines, 1, CV_PI / 180, 80, 30, 10);
+	for (size_t i = 0; i < lines.size(); i++)
+	{
+		cv::line(srcCopy, cv::Point(lines[i][0], lines[i][1]),
+			cv::Point(lines[i][2], lines[i][3]), cv::Scalar(0, 0, 255), 3, 8);
+	}
+
+	cv::imshow("test", srcCopy);
+	cv::waitKey();
+
+	return edges;
+}
 
 cv::Mat DocumentScanner::rectify6(const cv::Mat& src)
 {
@@ -70,7 +452,7 @@ cv::Mat DocumentScanner::rectify6(const cv::Mat& src)
 }
 
 
-cv::Mat DocumentScanner::rectify(const cv::Mat& src)
+cv::Mat DocumentScanner::rectify5(const cv::Mat& src)
 {
 	cv::namedWindow("test", cv::WINDOW_NORMAL);
 
@@ -109,7 +491,28 @@ cv::Mat DocumentScanner::rectify(const cv::Mat& src)
 	cv::Scalar meanDev = cv::mean(devMat);
 	//meanDev[0] = std::sqrt(meanDev[0]);
 
+	cv::Mat1b srcBin;
+	cv::inRange(srcHSV, cv::Scalar{ 0, dominantSat - meanDev[1], dominantVal - meanDev[2] }, cv::Scalar{ 179, dominantSat + meanDev[1], dominantVal + meanDev[2] }, srcBin);
+	cv::imshow("test", srcBin);
+	cv::waitKey();
 
+	std::vector<std::vector<cv::Point>> contours;
+	std::vector<cv::Vec4i> hierarchy;
+	cv::findContours(srcBin, contours, hierarchy, cv::RETR_EXTERNAL, cv::CHAIN_APPROX_SIMPLE);
+	
+	cv::Mat srcCopy = src.clone();
+	cv::drawContours(srcCopy, contours, -1, cv::Scalar(0,255,0), 4, cv::LINE_AA, hierarchy, 0);
+	//cv::imshow("test", srcCopy);
+	//cv::waitKey();
+
+	auto it = std::max_element(contours.begin(), contours.end(), [](const auto& c1, const auto &c2) { return cv::contourArea(c1) < cv::contourArea(c2); });
+	int contourIndex = it - contours.begin();
+	cv::drawContours(srcCopy, contours, contourIndex, cv::Scalar(0, 255, 0), 4);	
+	cv::imshow("test", srcCopy);
+	cv::waitKey();
+
+
+	return srcBin;
 }
 
 
@@ -378,11 +781,16 @@ int main(int argc, char* argv[])
 	try
 	{
 		//cv::Mat imSrc = cv::imread("./images/scanned-form.jpg", cv::IMREAD_UNCHANGED);	// TODO: not sure what reading mode should be used
-		cv::Mat imSrc = cv::imread("./images/ref2.jpg", cv::IMREAD_UNCHANGED);	// TODO: not sure what reading mode should be used
+		cv::Mat imSrc = cv::imread("./images/sens2.jpg", cv::IMREAD_UNCHANGED);	// TODO: not sure what reading mode should be used
 		//cv::Mat imSrc = cv::imread("./images/sunglass.png", cv::IMREAD_UNCHANGED);	// TODO: not sure what reading mode should be used
 
 		DocumentScanner scanner;
-		scanner.rectify(imSrc);		// TODO: perhaps, pass a file name as a window title
+		//scanner.rectify(imSrc);		// TODO: perhaps, pass a file name as a window title
+		std::vector<cv::Point> quad;
+		if (scanner.prepare(src, windowName, quad))
+		{
+			scanner.rectify(src, quad, windowName);
+		}
 
 		return 0;
 	}
