@@ -33,13 +33,27 @@ public:
 	bool prepare(const cv::Mat& src, const cv::String& windowName, std::vector<cv::Point> &quad);
 
 private:
+
+	static void onSelectionChanged(int pos, void* userData);
+
+	void drawSelection();
+
+	cv::Mat src, srcDecorated;
 	std::vector<std::vector<cv::Point>> candidates;
-	int bestCandidate;
+	int bestCandIdx;
 };	// DocumentScanner
+
+void DocumentScanner::onSelectionChanged(int pos, void* userData)
+{
+	DocumentScanner* scanner = static_cast<DocumentScanner*>(userData);
+	scanner->drawSelection();
+}
+
 
 bool DocumentScanner::prepare(const cv::Mat& src, const cv::String& windowName, std::vector<cv::Point>& quad)
 {
 	CV_Assert(src.depth() == CV_8U);
+	this->src = src;
 
 	cv::Mat srcHSV;
 	cv::cvtColor(src, srcHSV, cv::COLOR_BGR2HSV);
@@ -108,7 +122,7 @@ bool DocumentScanner::prepare(const cv::Mat& src, const cv::String& windowName, 
 		this->candidates.push_back(std::vector<cv::Point>{ {0, 0}, { 0, src.rows - 1 }, { 0, src.cols - 1 }, {src.rows-1, src.cols-1} });
 	
 	std::vector<double> rank(this->candidates.size(), 0);
-	int bestCandIdx = 0;
+	this->bestCandIdx = 0;
 	for (int i = 0; i < this->candidates.size(); ++i)
 	{
 		for (int j = 0; j < this->candidates.size(); ++j)
@@ -126,11 +140,13 @@ bool DocumentScanner::prepare(const cv::Mat& src, const cv::String& windowName, 
 			rank[i] += std::exp(-maxDist);
 		}	// j
 
-		if (rank[i] > rank[bestCandIdx])
-			bestCandIdx = i;
+		if (rank[i] > rank[this->bestCandIdx])
+			this->bestCandIdx = i;
 	}	// i
 
-
+	cv::namedWindow(windowName, cv::WINDOW_NORMAL);
+	cv::createTrackbar("Selection", windowName, this->bestCandIdx, this->candidates.size() - 1, &DocumentScanner::onSelectionChanged, this);
+	
 }	// prepare
 
 // TODO: add a parameter to specify the algorithm
