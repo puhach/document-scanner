@@ -132,7 +132,7 @@ bool DocumentScanner::prepare(const cv::Mat& src, const cv::String& windowName, 
 	}	// for i channel
 
 	if (this->candidates.empty())
-		this->candidates.push_back(std::vector<cv::Point>{ {0, 0}, { 0, src.rows - 1 }, { 0, src.cols - 1 }, {src.rows-1, src.cols-1} });
+		this->candidates.push_back(std::vector<cv::Point>{ {0, 0}, { 0, src.rows - 1 }, {src.rows-1, src.cols-1}, { 0, src.cols - 1 } });
 	
 	std::vector<double> rank(this->candidates.size(), 0);
 	this->bestCandIdx = 0;
@@ -165,9 +165,7 @@ bool DocumentScanner::prepare(const cv::Mat& src, const cv::String& windowName, 
 	drawSelection();
 
 	cv::imshow(windowName, this->srcDecorated);
-	cv::waitKey();
-
-	return false;
+	return (cv::waitKey() & 0xFF) != 27;
 }	// prepare
 
 // TODO: add a parameter to specify the algorithm
@@ -910,7 +908,7 @@ int main(int argc, char* argv[])
 	try
 	{
 		//cv::Mat imSrc = cv::imread("./images/scanned-form.jpg", cv::IMREAD_UNCHANGED);	// TODO: not sure what reading mode should be used
-		cv::Mat imSrc = cv::imread("./images/sens2.jpg", cv::IMREAD_UNCHANGED);	// TODO: not sure what reading mode should be used
+		cv::Mat imSrc = cv::imread("./images/ref2.jpg", cv::IMREAD_UNCHANGED);	// TODO: not sure what reading mode should be used
 		//cv::Mat imSrc = cv::imread("./images/sunglass.png", cv::IMREAD_UNCHANGED);	// TODO: not sure what reading mode should be used
 
 		DocumentScanner scanner;
