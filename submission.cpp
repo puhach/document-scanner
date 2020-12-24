@@ -7,6 +7,7 @@
 #include <opencv2/core.hpp>
 #include <opencv2/imgproc.hpp>
 #include <opencv2/imgcodecs.hpp>
+#include <opencv2/calib3d.hpp>
 #include <opencv2/highgui.hpp>
 
 
@@ -32,9 +33,11 @@ public:
 
 	cv::Mat rectify10(const cv::Mat& src);
 
-	cv::Mat rectify(const cv::Mat& src, std::vector<cv::Point> &quad);
+	cv::Mat rectify(const cv::Mat& src, std::vector<cv::Point> &quad, int width, int height);
 
 	bool prepare(const cv::Mat& src, std::vector<cv::Point> &quad);
+
+	bool display(const cv::Mat &image);
 
 private:
 
@@ -49,10 +52,18 @@ private:
 
 	cv::Mat src, srcDecorated;
 	cv::String windowName;
+	//std::vector<std::vector<cv::Point2f>> candidates;
 	std::vector<std::vector<cv::Point>> candidates;
 	int bestCandIdx = -1;	
+	//cv::Point2f* ptDragged = nullptr;
 	cv::Point* ptDragged = nullptr;
 };	// DocumentScanner
+
+bool DocumentScanner::display(const cv::Mat& image)
+{
+	cv::imshow(this->windowName, image);
+	return (cv::waitKey() & 0xFF) != 27;
+}
 
 /*
 void DocumentScanner::onSelectionChanged(int pos, void* userData)
@@ -93,6 +104,7 @@ void DocumentScanner::onMouseEvent(int event, int x, int y, int flags, void* use
 
 			// v2			
 			cv::Point p0{ x, y };
+			//cv::Point2f p0( static_cast<float>(x), static_cast<float>(y) );
 			double minDist = std::numeric_limits<double>::infinity();
 			for (auto& p : scanner->candidates[scanner->bestCandIdx])
 			{
@@ -161,6 +173,7 @@ void DocumentScanner::drawSelection()
 	}	// for
 }	// drawSelection
 
+// TODO: add a parameter to specify the algorithm
 bool DocumentScanner::prepare(const cv::Mat& src, std::vector<cv::Point>& quad)
 {
 	CV_Assert(src.depth() == CV_8U);
@@ -233,7 +246,7 @@ bool DocumentScanner::prepare(const cv::Mat& src, std::vector<cv::Point>& quad)
 	}	// for i channel
 
 	if (this->candidates.empty())
-		this->candidates.push_back(std::vector<cv::Point>{ {0, 0}, { 0, src.rows - 1 }, {src.rows-1, src.cols-1}, { 0, src.cols - 1 } });
+		this->candidates.push_back(std::vector<cv::Point>{ {0, 0}, { 0, src.rows - 1 }, { src.rows-1, src.cols-1 }, { 0, src.cols - 1 } });
 	
 	std::vector<double> rank(this->candidates.size(), 0);
 	this->bestCandIdx = 0;
@@ -259,7 +272,7 @@ bool DocumentScanner::prepare(const cv::Mat& src, std::vector<cv::Point>& quad)
 	}	// i
 
 	// A mouse handler will let the user move the vertices in case our automatic selection was not correct
-	cv::namedWindow(this->windowName, cv::WINDOW_NORMAL);
+	cv::namedWindow(this->windowName, cv::WINDOW_AUTOSIZE);
 	cv::setMouseCallback(this->windowName, &DocumentScanner::onMouseEvent, this);
 
 	// Another option would be to create a slider to choose between available candidates
@@ -280,19 +293,36 @@ bool DocumentScanner::prepare(const cv::Mat& src, std::vector<cv::Point>& quad)
 
 	cv::destroyWindow(this->windowName);
 
+	quad = this->candidates[this->bestCandIdx];
+
 	return (key & 0xFF) != 27;	// not escape
 }	// prepare
 
-// TODO: add a parameter to specify the algorithm
-cv::Mat DocumentScanner::rectify(const cv::Mat& src, std::vector<cv::Point> &quad)
+cv::Mat DocumentScanner::rectify(const cv::Mat& src, std::vector<cv::Point> &quad, int width, int height)
 {
-	cv::namedWindow(this->windowName, cv::WINDOW_NORMAL);
+	CV_Assert(!src.empty());
+	CV_Assert(quad.size() == 4);
 
-	
+	cv::namedWindow(this->windowName, cv::WINDOW_AUTOSIZE);
 
-	// TODO: warp perspective
-	
-	return src;
+	//std::vector<cv::Point> destVertices{ { 0,0 }, {width - 1, 0}, {width - 1, height - 1}, {0, height-1} };
+	//std::vector<cv::Point> destVertices{ { 0,0 }, {0, height - 1}, {width - 1, height - 1}, {width - 1, 0} };
+	std::vector<cv::Point> destVertices{ {width - 1, 0}, { 0,0 }, {0, height - 1}, {width - 1, height - 1} };
+
+	std::vector<cv::Point2f> quadf;
+	std::vector<cv::Point2f> destvertf;
+	std::transform(quad.begin(), quad.end(), std::back_inserter(quadf), [](const cv::Point& p) { return cv::Point2f(p.x, p.y); });
+	std::transform(destVertices.begin(), destVertices.end(), std::back_inserter(destvertf), [](const cv::Point& p) { return cv::Point2f(p.x, p.y); });
+
+	//if (cv::Mat homography = cv::findHomography(quad, destVertices); homography.empty())
+	if (cv::Mat homography = cv::findHomography(quadf, destvertf); homography.empty())
+		return src;
+	else
+	{
+		cv::Mat dst = cv::Mat::zeros(cv::Size(width,height), CV_8UC3);
+		cv::warpPerspective(src, dst, homography, cv::Size(width, height));
+		return dst;
+	}
 }	// rectify
 
 cv::Mat DocumentScanner::rectify10(const cv::Mat& src)
@@ -385,7 +415,7 @@ cv::Mat DocumentScanner::rectify10(const cv::Mat& src)
 	cv::Scalar colors[] = { {255,0,0}, {0,255,0}, {0,0,255} };
 	for (int i = 0; i < candidates.size(); ++i)
 	{
-		//cv::drawContours(srcCopy, candidates, i, cv::Scalar(10*i/256, 64*i%256, 32*i%256), 5, cv::LINE_AA, cv::noArray(), 0);
+		///cv::drawContours(srcCopy, candidates, i, cv::Scalar(10*i/256, 64*i%256, 32*i%256), 5, cv::LINE_AA, cv::noArray(), 0);
 		cv::polylines(srcCopy, candidates[i], true, colors[i%3], 4);
 	}
 	cv::imshow("test", srcCopy);
@@ -1022,8 +1052,8 @@ int main(int argc, char* argv[])
 {
 	try
 	{
-		//cv::Mat imSrc = cv::imread("./images/scanned-form.jpg", cv::IMREAD_UNCHANGED);	// TODO: not sure what reading mode should be used
-		cv::Mat imSrc = cv::imread("./images/small.jpg", cv::IMREAD_UNCHANGED);	// TODO: not sure what reading mode should be used
+		cv::Mat imSrc = cv::imread("./images/scanned-form.jpg", cv::IMREAD_UNCHANGED);	// TODO: not sure what reading mode should be used
+		//cv::Mat imSrc = cv::imread("./images/mozart2.jpg", cv::IMREAD_UNCHANGED);	// TODO: not sure what reading mode should be used
 		//cv::Mat imSrc = cv::imread("./images/sunglass.png", cv::IMREAD_UNCHANGED);	// TODO: not sure what reading mode should be used
 
 		DocumentScanner scanner;
@@ -1032,7 +1062,8 @@ int main(int argc, char* argv[])
 		std::vector<cv::Point> quad;
 		if (scanner.prepare(imSrc, quad))	// TODO: perhaps, pass a file name as a window title
 		{
-			scanner.rectify(imSrc, quad);
+			cv::Mat out = scanner.rectify(imSrc, quad, 500, 707);
+			scanner.display(out);
 		}
 
 		return 0;
