@@ -16,6 +16,9 @@ public:
 
 	// TODO: implement copy/move semantics
 
+	const cv::String& getWindowName() const noexcept { return this->windowName; }
+	void setWindowName(const cv::String& windowName) { this->windowName = windowName; }
+
 	cv::Mat rectify1(const cv::Mat& src);	// TODO: consider making it const
 	cv::Mat rectify2(const cv::Mat& src);
 	cv::Mat rectify3(const cv::Mat& src);
@@ -28,9 +31,9 @@ public:
 
 	cv::Mat rectify10(const cv::Mat& src);
 
-	cv::Mat rectify(const cv::Mat& src, std::vector<cv::Point> &quad, const cv::String &windowName);
+	cv::Mat rectify(const cv::Mat& src, std::vector<cv::Point> &quad);
 
-	bool prepare(const cv::Mat& src, const cv::String& windowName, std::vector<cv::Point> &quad);
+	bool prepare(const cv::Mat& src, std::vector<cv::Point> &quad);
 
 private:
 
@@ -41,7 +44,7 @@ private:
 	cv::Mat src, srcDecorated;
 	cv::String windowName;
 	std::vector<std::vector<cv::Point>> candidates;
-	int bestCandIdx;	
+	int bestCandIdx = -1;	
 };	// DocumentScanner
 
 void DocumentScanner::onSelectionChanged(int pos, void* userData)
@@ -61,11 +64,11 @@ void DocumentScanner::drawSelection()
 	cv::waitKey(10);
 }
 
-bool DocumentScanner::prepare(const cv::Mat& src, const cv::String& windowName, std::vector<cv::Point>& quad)
+bool DocumentScanner::prepare(const cv::Mat& src, std::vector<cv::Point>& quad)
 {
 	CV_Assert(src.depth() == CV_8U);
 	this->src = src;
-	this->windowName = windowName;
+	//this->windowName = windowName;
 
 	cv::Mat srcHSV;
 	cv::cvtColor(src, srcHSV, cv::COLOR_BGR2HSV);
@@ -169,9 +172,9 @@ bool DocumentScanner::prepare(const cv::Mat& src, const cv::String& windowName, 
 }	// prepare
 
 // TODO: add a parameter to specify the algorithm
-cv::Mat DocumentScanner::rectify(const cv::Mat& src, std::vector<cv::Point> &quad, const cv::String &windowName)
+cv::Mat DocumentScanner::rectify(const cv::Mat& src, std::vector<cv::Point> &quad)
 {
-	cv::namedWindow(windowName, cv::WINDOW_NORMAL);
+	cv::namedWindow(this->windowName, cv::WINDOW_NORMAL);
 
 	
 
@@ -912,11 +915,12 @@ int main(int argc, char* argv[])
 		//cv::Mat imSrc = cv::imread("./images/sunglass.png", cv::IMREAD_UNCHANGED);	// TODO: not sure what reading mode should be used
 
 		DocumentScanner scanner;
+		scanner.setWindowName("my");
 		//scanner.rectify(imSrc);		
 		std::vector<cv::Point> quad;
-		if (scanner.prepare(imSrc, "my", quad))	// TODO: perhaps, pass a file name as a window title
+		if (scanner.prepare(imSrc, quad))	// TODO: perhaps, pass a file name as a window title
 		{
-			scanner.rectify(imSrc, quad, "my");
+			scanner.rectify(imSrc, quad);
 		}
 
 		return 0;
