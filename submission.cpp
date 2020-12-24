@@ -1,6 +1,7 @@
 #include <iostream>
 #include <vector>
 #include <algorithm>
+#include <numeric>
 #include <exception>
 
 #include <opencv2/core.hpp>
@@ -12,7 +13,7 @@
 class DocumentScanner
 {
 public:
-	DocumentScanner() = default;
+	DocumentScanner() = default;	// TODO: perhaps, add a window parameter
 
 	// TODO: implement copy/move semantics
 
@@ -39,12 +40,15 @@ private:
 
 	static void onSelectionChanged(int pos, void* userData);
 
+	static void onMouseEvent(int event, int x, int y, int flags, void *userData);
+
 	void drawSelection();
 
 	cv::Mat src, srcDecorated;
 	cv::String windowName;
 	std::vector<std::vector<cv::Point>> candidates;
 	int bestCandIdx = -1;	
+	cv::Point* ptDragged = nullptr;
 };	// DocumentScanner
 
 void DocumentScanner::onSelectionChanged(int pos, void* userData)
@@ -53,22 +57,118 @@ void DocumentScanner::onSelectionChanged(int pos, void* userData)
 	scanner->drawSelection();
 }
 
+void DocumentScanner::onMouseEvent(int event, int x, int y, int flags, void* userData)
+{
+	DocumentScanner* scanner = static_cast<DocumentScanner*>(userData);
+
+	switch (event)
+	{
+	case cv::EVENT_LBUTTONDOWN:
+		{
+			CV_Assert(scanner->bestCandIdx >= 0);
+			CV_Assert(!scanner->candidates.empty());
+
+			// Find the closest point
+			auto& cand = scanner->candidates[scanner->bestCandIdx];
+			/*auto it = std::min_element(cand.begin(), cand.end(), [p0 = cv::Point(x,y)](const auto& p1, const auto& p2) {
+					double d1 = cv::norm(p1 - p0);
+					double d2 = cv::norm(p2 - p0);
+					return d1 < d2;
+				});*/
+
+				// v1
+			{
+				auto acc = std::accumulate(cand.begin(), cand.end(), std::pair<const cv::Point*, double>{ nullptr, std::numeric_limits<double>::infinity() },
+					[p0 = cv::Point(x, y)](const auto& minp, const auto& p){
+					double d = cv::norm(p - p0);
+					if (d < minp.second)
+						return std::make_pair(&p, d);
+					else
+						return minp;
+				});
+
+				if (acc.second > 0.01 * cv::norm(cv::Point(scanner->src.rows, scanner->src.cols)))
+					scanner->ptDragged = nullptr;
+			}
+
+			// v2
+			{
+				cv::Point p0{ x, y };
+				double minDist = std::numeric_limits<double>::infinity();
+				for (auto& p : cand)
+				{
+					if (double d = cv::norm(p - p0); d < minDist)
+					{
+						minDist = d;
+						scanner->ptDragged = &p;
+					}
+				}
+
+				if (minDist > 0.01 * cv::norm(cv::Point(scanner->src.rows, scanner->src.cols)))	// not close enough?
+					scanner->ptDragged = nullptr;
+			}
+
+			scanner->drawSelection();
+		}
+
+		break;	// mouse down
+
+	case cv::EVENT_LBUTTONUP:
+		scanner->ptDragged = nullptr;
+		scanner->drawSelection();
+		break;	// mouse up
+
+	case cv::EVENT_MOUSEMOVE:
+
+		if (scanner->ptDragged)
+		{
+			if ((flags & cv::EVENT_FLAG_LBUTTON) && x >= 0 && y >= 0 && x < scanner->src.cols && y < scanner->src.rows)
+			//if ((flags & cv::EVENT_FLAG_LBUTTON) )
+			{				
+				scanner->ptDragged->x = x;
+				scanner->ptDragged->y = y;
+			}	// left button down
+			else
+			{
+				// 1) A user might have tried to drag the point outside the window
+				// 2) A user might have released the mouse button outside the window, so we didn't detect it
+				scanner->ptDragged = nullptr;				
+			}
+
+			scanner->drawSelection();
+		}	// ptDragged != nullptr
+
+		break;	// mouse move
+	}	// switch
+}	// onMouseEvent
+
 void DocumentScanner::drawSelection()
 {
 	CV_Assert(this->bestCandIdx >= 0 && this->bestCandIdx < this->candidates.size());
-	
+		
 	this->src.copyTo(this->srcDecorated);
-	cv::polylines(this->srcDecorated, this->candidates[this->bestCandIdx], true, cv::Scalar(0,255,0), 4, cv::LINE_AA);
 
-	cv::imshow(this->windowName, this->srcDecorated);
-	cv::waitKey(10);
-}
+	// Draw the lines
+	double diag = cv::norm(cv::Point(this->src.rows, this->src.cols));
+	int lineWidth = std::max(2, static_cast<int>(0.001 * diag));
+	cv::polylines(this->srcDecorated, this->candidates[this->bestCandIdx], true, cv::Scalar(0,255,0), lineWidth, cv::LINE_AA);
+	
+	// Draw the vertices
+	int rInner = std::max(5, static_cast<int>(0.007 * diag));
+	int rOuter = std::max(rInner, static_cast<int>(0.008 * diag));	
+	for (const auto& p : this->candidates[this->bestCandIdx])
+	{
+		cv::circle(this->srcDecorated, p, rOuter, &p == this->ptDragged ? cv::Scalar(0, 255, 255) : cv::Scalar(0, 0, 0), -1, cv::LINE_AA);
+		cv::circle(this->srcDecorated, p, rInner, cv::Scalar(0,0,255), -1, cv::LINE_AA);
+	}	// for
+}	// drawSelection
 
 bool DocumentScanner::prepare(const cv::Mat& src, std::vector<cv::Point>& quad)
 {
 	CV_Assert(src.depth() == CV_8U);
 	this->src = src;
 	//this->windowName = windowName;
+	this->ptDragged = nullptr;
 
 	cv::Mat srcHSV;
 	cv::cvtColor(src, srcHSV, cv::COLOR_BGR2HSV);
@@ -90,12 +190,12 @@ bool DocumentScanner::prepare(const cv::Mat& src, std::vector<cv::Point>& quad)
 	{
 		cv::Mat1b channel = srcChannelsHSV[i];
 
-		constexpr int threshLevels = 10;
+		constexpr int threshLevels = 3;	// TODO: maybe add this as a parameter
 
 		for (int threshLevel = 1; threshLevel <= threshLevels; ++threshLevel)
 		{
 			cv::Mat1b channelBin;
-			cv::threshold(channel, channelBin, threshLevel * 255.0 / (threshLevels + 1), 255,
+			cv::threshold(channel, channelBin, threshLevel * 255.0 / (threshLevels + 1.0), 255,
 				i == 1 ? cv::THRESH_BINARY_INV : cv::THRESH_BINARY);	// for a value channel use another threshold
 
 			//cv::dilate(channelBin, channelBin, cv::getStructuringElement(cv::MORPH_ELLIPSE, cv::Size(5, 5)));
@@ -160,15 +260,25 @@ bool DocumentScanner::prepare(const cv::Mat& src, std::vector<cv::Point>& quad)
 			this->bestCandIdx = i;
 	}	// i
 
-	cv::namedWindow(windowName, cv::WINDOW_NORMAL);
+	cv::namedWindow(this->windowName, cv::WINDOW_NORMAL);
+	cv::setMouseCallback(this->windowName, &DocumentScanner::onMouseEvent, this);
 	cv::createTrackbar("Selection", windowName, &this->bestCandIdx
 		, static_cast<int>(this->candidates.size()) - 1
 		, &DocumentScanner::onSelectionChanged, this);
 
 	drawSelection();
 
-	cv::imshow(windowName, this->srcDecorated);
-	return (cv::waitKey() & 0xFF) != 27;
+	//cv::imshow(windowName, this->srcDecorated);
+	//return (cv::waitKey() & 0xFF) != 27;
+
+	int key = 0;
+	while (key != 27 && key != 32)
+	{
+		cv::imshow(this->windowName, this->srcDecorated);
+		key = cv::waitKey(10) & 0xFF;
+	}
+
+	return key == 32;
 }	// prepare
 
 // TODO: add a parameter to specify the algorithm
