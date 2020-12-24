@@ -38,11 +38,14 @@ public:
 
 private:
 
-	static void onSelectionChanged(int pos, void* userData);
+	//static void onSelectionChanged(int pos, void* userData);
 
 	static void onMouseEvent(int event, int x, int y, int flags, void *userData);
 
 	void drawSelection();
+
+	constexpr static int minPointRadius = 3;
+	constexpr static int minLineWidth = 1;
 
 	cv::Mat src, srcDecorated;
 	cv::String windowName;
@@ -51,11 +54,13 @@ private:
 	cv::Point* ptDragged = nullptr;
 };	// DocumentScanner
 
+/*
 void DocumentScanner::onSelectionChanged(int pos, void* userData)
 {
 	DocumentScanner* scanner = static_cast<DocumentScanner*>(userData);
 	scanner->drawSelection();
 }
+*/
 
 void DocumentScanner::onMouseEvent(int event, int x, int y, int flags, void* userData)
 {
@@ -65,48 +70,41 @@ void DocumentScanner::onMouseEvent(int event, int x, int y, int flags, void* use
 	{
 	case cv::EVENT_LBUTTONDOWN:
 		{
-			CV_Assert(scanner->bestCandIdx >= 0);
 			CV_Assert(!scanner->candidates.empty());
+			CV_Assert(scanner->bestCandIdx >= 0 && scanner->bestCandIdx < scanner->candidates.size());
 
 			// Find the closest point
+
+			// v1
+			/*
 			auto& cand = scanner->candidates[scanner->bestCandIdx];
-			/*auto it = std::min_element(cand.begin(), cand.end(), [p0 = cv::Point(x,y)](const auto& p1, const auto& p2) {
-					double d1 = cv::norm(p1 - p0);
-					double d2 = cv::norm(p2 - p0);
-					return d1 < d2;
-				});*/
+			auto acc = std::accumulate(cand.begin(), cand.end(), std::pair<const cv::Point*, double>{ nullptr, std::numeric_limits<double>::infinity() },
+				[p0 = cv::Point(x, y)](const auto& minp, const auto& p){
+				double d = cv::norm(p - p0);
+				if (d < minp.second)
+					return std::make_pair(&p, d);
+				else
+					return minp;
+			});
 
-				// v1
+			if (acc.second > 0.01 * cv::norm(cv::Point(scanner->src.rows, scanner->src.cols)))
+				scanner->ptDragged = nullptr;
+			*/
+
+			// v2			
+			cv::Point p0{ x, y };
+			double minDist = std::numeric_limits<double>::infinity();
+			for (auto& p : scanner->candidates[scanner->bestCandIdx])
 			{
-				auto acc = std::accumulate(cand.begin(), cand.end(), std::pair<const cv::Point*, double>{ nullptr, std::numeric_limits<double>::infinity() },
-					[p0 = cv::Point(x, y)](const auto& minp, const auto& p){
-					double d = cv::norm(p - p0);
-					if (d < minp.second)
-						return std::make_pair(&p, d);
-					else
-						return minp;
-				});
-
-				if (acc.second > 0.01 * cv::norm(cv::Point(scanner->src.rows, scanner->src.cols)))
-					scanner->ptDragged = nullptr;
-			}
-
-			// v2
-			{
-				cv::Point p0{ x, y };
-				double minDist = std::numeric_limits<double>::infinity();
-				for (auto& p : cand)
+				if (double d = cv::norm(p - p0); d < minDist)
 				{
-					if (double d = cv::norm(p - p0); d < minDist)
-					{
-						minDist = d;
-						scanner->ptDragged = &p;
-					}
+					minDist = d;
+					scanner->ptDragged = &p;
 				}
-
-				if (minDist > 0.01 * cv::norm(cv::Point(scanner->src.rows, scanner->src.cols)))	// not close enough?
-					scanner->ptDragged = nullptr;
 			}
+
+			if (minDist > std::max(minPointRadius+1.0, 0.01 * cv::norm(cv::Point(scanner->src.rows, scanner->src.cols))))	// not close enough?
+				scanner->ptDragged = nullptr;
 
 			scanner->drawSelection();
 		}
@@ -150,12 +148,12 @@ void DocumentScanner::drawSelection()
 
 	// Draw the lines
 	double diag = cv::norm(cv::Point(this->src.rows, this->src.cols));
-	int lineWidth = std::max(2, static_cast<int>(0.001 * diag));
+	int lineWidth = std::max(minLineWidth, static_cast<int>(0.001 * diag));
 	cv::polylines(this->srcDecorated, this->candidates[this->bestCandIdx], true, cv::Scalar(0,255,0), lineWidth, cv::LINE_AA);
 	
 	// Draw the vertices
-	int rInner = std::max(5, static_cast<int>(0.007 * diag));
-	int rOuter = std::max(rInner, static_cast<int>(0.008 * diag));	
+	int rInner = std::max(minPointRadius, static_cast<int>(0.007 * diag));
+	int rOuter = std::max(rInner+1, static_cast<int>(0.008 * diag));	
 	for (const auto& p : this->candidates[this->bestCandIdx])
 	{
 		cv::circle(this->srcDecorated, p, rOuter, &p == this->ptDragged ? cv::Scalar(0, 255, 255) : cv::Scalar(0, 0, 0), -1, cv::LINE_AA);
@@ -260,25 +258,29 @@ bool DocumentScanner::prepare(const cv::Mat& src, std::vector<cv::Point>& quad)
 			this->bestCandIdx = i;
 	}	// i
 
+	// A mouse handler will let the user move the vertices in case our automatic selection was not correct
 	cv::namedWindow(this->windowName, cv::WINDOW_NORMAL);
 	cv::setMouseCallback(this->windowName, &DocumentScanner::onMouseEvent, this);
+
+	// Another option would be to create a slider to choose between available candidates
+	/*
 	cv::createTrackbar("Selection", windowName, &this->bestCandIdx
 		, static_cast<int>(this->candidates.size()) - 1
 		, &DocumentScanner::onSelectionChanged, this);
+		*/
 
-	drawSelection();
+	drawSelection();	// draw the boundaries of the paper sheet we have just found
 
-	//cv::imshow(windowName, this->srcDecorated);
-	//return (cv::waitKey() & 0xFF) != 27;
-
-	int key = 0;
-	while (key != 27 && key != 32)
+	int key = -1;
+	do
 	{
 		cv::imshow(this->windowName, this->srcDecorated);
-		key = cv::waitKey(10) & 0xFF;
-	}
+		key = cv::waitKey(10);
+	} while (key < 0);
 
-	return key == 32;
+	cv::destroyWindow(this->windowName);
+
+	return (key & 0xFF) != 27;	// not escape
 }	// prepare
 
 // TODO: add a parameter to specify the algorithm
@@ -1021,7 +1023,7 @@ int main(int argc, char* argv[])
 	try
 	{
 		//cv::Mat imSrc = cv::imread("./images/scanned-form.jpg", cv::IMREAD_UNCHANGED);	// TODO: not sure what reading mode should be used
-		cv::Mat imSrc = cv::imread("./images/ref2.jpg", cv::IMREAD_UNCHANGED);	// TODO: not sure what reading mode should be used
+		cv::Mat imSrc = cv::imread("./images/small.jpg", cv::IMREAD_UNCHANGED);	// TODO: not sure what reading mode should be used
 		//cv::Mat imSrc = cv::imread("./images/sunglass.png", cv::IMREAD_UNCHANGED);	// TODO: not sure what reading mode should be used
 
 		DocumentScanner scanner;
