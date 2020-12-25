@@ -372,12 +372,39 @@ cv::Mat DocumentScanner::rectify(const cv::Mat& src, std::vector<cv::Point>& qua
 	}
 
 
+	// TODO: add a parameter to establish width/high ordering
+	bool allowDimReordering = true;
+	bool rotateImage = false;
+	if (allowDimReordering)
+	{
+		// Estimate width and height of the document from the source image
+		double wSrc = cv::norm(quadF[0] - quadF[1]), hSrc = cv::norm(quadF[0] - quadF[3]);
+
+		// Try to determine the orientation 
+		if ((wSrc >= hSrc) != (width >= height))
+		{
+			std::swap(width, height);
+			rotateImage = true;
+		}
+
+		//double arSrc = cv::norm(quadF[0] - quadF[1]) / (cv::norm(quadF[0]-quadF[3]) + 1e-8);
+		//double arDst1 = width / (height + 1e-8);
+		//double arDst2 = height / (width + 1e-8);
+
+		//// Which orientation is more similar to our image
+		//if (std::abs(arSrc - arDst1) > std::abs(arSrc - arDst2))
+		//{
+		//	std::swap(width, height);
+		//	rotateImage = true;
+		//}
+	}
 
 	//std::vector<cv::Point> destVertices{ { 0,0 }, {width - 1, 0}, {width - 1, height - 1}, {0, height-1} };
 	//std::vector<cv::Point> destVertices{ { 0,0 }, {0, height - 1}, {width - 1, height - 1}, {width - 1, 0} };
 	//std::vector<cv::Point> destVertices{ {width - 1, 0}, { 0,0 }, {0, height - 1}, {width - 1, height - 1} };
 	//std::vector<cv::Point2f> destVerticesF{ {width - 1.0f, 0.0f}, { 0.0f, 0.0f }, {0.0f, height - 1.0f}, {width - 1.0f, height - 1.0f} };
-	//std::vector<cv::Point2f> destVerticesF{ { 0.0f, 0.0f }, {0.0f, height - 1.0f}, {width - 1.0f, height - 1.0f}, {width - 1.0f, 0.0f} };
+	//std::vector<cv::Point2f> dstQuadF{ { 0.0f, 0.0f }, {0.0f, height - 1.0f}, {width - 1.0f, height - 1.0f}, {width - 1.0f, 0.0f} };
+	
 	std::vector<cv::Point2f> dstQuadF{ { 0.0f, 0.0f }, {width - 1.0f, 0.0f}, {width - 1.0f, height - 1.0f}, {0.0f, height - 1.0f} };
 
 
@@ -399,6 +426,10 @@ cv::Mat DocumentScanner::rectify(const cv::Mat& src, std::vector<cv::Point>& qua
 	{
 		cv::Mat dst = cv::Mat::zeros(cv::Size(width, height), CV_8UC3);
 		cv::warpPerspective(src, dst, m, cv::Size(width, height));
+
+		if (rotateImage)
+			cv::rotate(dst, dst, cv::ROTATE_90_CLOCKWISE);
+
 		return dst;
 	}
 }	// rectify
@@ -1130,9 +1161,9 @@ int main(int argc, char* argv[])
 {
 	try
 	{
-		//cv::Mat imSrc = cv::imread("./images/scanned-form.jpg", cv::IMREAD_UNCHANGED);	// TODO: not sure what reading mode should be used
-		cv::Mat imSrc = cv::imread("./images/mozart2.jpg", cv::IMREAD_UNCHANGED);	// TODO: not sure what reading mode should be used
-		//cv::Mat imSrc = cv::imread("./images/sunglass.png", cv::IMREAD_UNCHANGED);	// TODO: not sure what reading mode should be used
+		//cv::Mat imSrc = cv::imread("./images/scanned-form.jpg", cv::IMREAD_COLOR);	// TODO: not sure what reading mode should be used
+		//cv::Mat imSrc = cv::imread("./images/mozart1.jpg", cv::IMREAD_COLOR);	// EXIF is important
+		cv::Mat imSrc = cv::imread("./images/sens2.jpg", cv::IMREAD_COLOR);	// EXIF is important
 
 		DocumentScanner scanner;
 		scanner.setWindowName("my");
