@@ -11,6 +11,67 @@
 #include <opencv2/highgui.hpp>
 
 
+
+/************************************************************************************
+*
+*	Paper detection classes
+*
+*************************************************************************************/
+
+// The parent class for detectors which return a quad rather than a bounding box
+class AbstractQuadDetector
+{
+public:
+	virtual ~AbstractQuadDetector() = default;
+	// TODO: define copy/move semantics
+
+	//virtual std::vector<cv::Point> detect(const cv::Mat &image) = 0;	// TODO: perhaps, make it const?
+
+	std::vector<cv::Point> detect(const cv::Mat& image) const;
+
+private:
+	virtual std::vector<std::vector<cv::Point>> detectCandidates(const cv::Mat& image) const = 0;
+	virtual std::vector<cv::Point> selectBestCandidate(const std::vector<std::vector<cv::Point>>& candidates) const;
+};	// AbstractQuadDetector
+
+std::vector<cv::Point> AbstractQuadDetector::detect(const cv::Mat& image) const
+{
+	return selectBestCandidate(detectCandidates(image));
+}
+
+std::vector<cv::Point> AbstractQuadDetector::selectBestCandidate(const std::vector<std::vector<cv::Point>>& candidates) const
+{
+	CV_Assert(candidates.size() == 4);
+
+	std::vector<double> rank(candidates.size(), 0);
+	int bestCandIdx = 0;
+	for (int i = 0; i < candidates.size(); ++i)
+	{
+		for (int j = 0; j < candidates.size(); ++j)
+		{
+			if (i == j)
+				continue;
+
+			double maxDist = 0;
+			for (int v = 0; v < 4; ++v)
+			{
+				double d = cv::norm(candidates[j][v] - candidates[i][v]);
+				maxDist = std::max(d, maxDist);
+			}	// v
+
+			rank[i] += std::exp(-maxDist);
+		}	// j
+
+		if (rank[i] > rank[bestCandIdx])
+			bestCandIdx = i;
+	}	// i
+
+	return candidates[bestCandIdx];
+}	// selectBestCandidate
+
+
+
+
 class DocumentScanner
 {
 public:
@@ -41,8 +102,6 @@ public:
 
 private:
 
-	//static void onSelectionChanged(int pos, void* userData);
-
 	static void onMouseEvent(int event, int x, int y, int flags, void *userData);
 
 	void drawSelection();
@@ -54,11 +113,10 @@ private:
 
 	cv::Mat src, srcDecorated;
 	cv::String windowName;
-	//std::vector<std::vector<cv::Point2f>> candidates;
 	std::vector<std::vector<cv::Point>> candidates;
 	int bestCandIdx = -1;	
-	//cv::Point2f* ptDragged = nullptr;
-	cv::Point* ptDragged = nullptr;
+	cv::Point* ptDragged = nullptr;		// raw pointers are fine if the pointer is non-owning
+	std::unique_ptr<AbstractQuadDetector> paperDetector = std::make_unique<IthreshPaperSheetDetector>();	// TODO: add getter/setter
 };	// DocumentScanner
 
 bool DocumentScanner::display(const cv::Mat& image)
@@ -66,14 +124,6 @@ bool DocumentScanner::display(const cv::Mat& image)
 	cv::imshow(this->windowName, image);
 	return (cv::waitKey() & 0xFF) != 27;
 }
-
-/*
-void DocumentScanner::onSelectionChanged(int pos, void* userData)
-{
-	DocumentScanner* scanner = static_cast<DocumentScanner*>(userData);
-	scanner->drawSelection();
-}
-*/
 
 void DocumentScanner::onMouseEvent(int event, int x, int y, int flags, void* userData)
 {
@@ -135,7 +185,6 @@ void DocumentScanner::onMouseEvent(int event, int x, int y, int flags, void* use
 		if (scanner->ptDragged)
 		{
 			if ((flags & cv::EVENT_FLAG_LBUTTON) && x >= 0 && y >= 0 && x < scanner->src.cols && y < scanner->src.rows)
-			//if ((flags & cv::EVENT_FLAG_LBUTTON) )
 			{				
 				scanner->ptDragged->x = x;
 				scanner->ptDragged->y = y;
@@ -225,22 +274,19 @@ bool DocumentScanner::prepare(const cv::Mat& src, std::vector<cv::Point>& quad)
 
 			std::vector<std::vector<cv::Point>> contours;
 			cv::findContours(channelBin, contours, cv::RETR_EXTERNAL, cv::CHAIN_APPROX_SIMPLE);
-			//cv::findContours(channelBin, contours, cv::RETR_LIST, cv::CHAIN_APPROX_SIMPLE);
-
-			/*cv::Mat tmp = src.clone();
-			cv::drawContours(tmp, contours, -1, cv::Scalar(255, 0, 0), 4);
-			cv::imshow("test", tmp);
-			cv::waitKey();*/
-
+			
 			for (auto& contour : contours)
 			{
 				std::vector<cv::Point> contourApprox;
 				cv::approxPolyDP(contour, contourApprox, 0.02 * cv::arcLength(contour, true), true);
 
+				if (contourApprox.size() != 4 || !cv::isContourConvex(contourApprox))
+					continue;
+
 				double approxArea = cv::contourArea(contourApprox, false);
 
-				if (contourApprox.size() != 4 || approxArea < 0.5 * channel.rows * channel.cols
-					|| approxArea >= 0.99 * channel.rows * channel.cols || !cv::isContourConvex(contourApprox))
+				// TODO: perhaps, add getters and setters for min and max area factors
+				if (approxArea < 0.5 * channel.rows * channel.cols	|| approxArea > 0.99 * channel.rows * channel.cols)
 					continue;
 								
 				this->candidates.push_back(contourApprox);
@@ -251,40 +297,12 @@ bool DocumentScanner::prepare(const cv::Mat& src, std::vector<cv::Point>& quad)
 	if (this->candidates.empty())
 		this->candidates.push_back(std::vector<cv::Point>{ {0, 0}, { 0, src.rows - 1 }, { src.rows-1, src.cols-1 }, { 0, src.cols - 1 } });
 	
-	std::vector<double> rank(this->candidates.size(), 0);
-	this->bestCandIdx = 0;
-	for (int i = 0; i < this->candidates.size(); ++i)
-	{
-		for (int j = 0; j < this->candidates.size(); ++j)
-		{
-			if (i == j)
-				continue;
 
-			double maxDist = 0;
-			for (int v = 0; v < 4; ++v)
-			{
-				double d = cv::norm(this->candidates[j][v] - this->candidates[i][v]);
-				maxDist = std::max(d, maxDist);
-			}	// v
-
-			rank[i] += std::exp(-maxDist);
-		}	// j
-
-		if (rank[i] > rank[this->bestCandIdx])
-			this->bestCandIdx = i;
-	}	// i
 
 	// A mouse handler will let the user move the vertices in case our automatic selection was not correct
 	cv::namedWindow(this->windowName, cv::WINDOW_AUTOSIZE);
 	cv::setMouseCallback(this->windowName, &DocumentScanner::onMouseEvent, this);
-
-	// Another option would be to create a slider to choose between available candidates
-	/*
-	cv::createTrackbar("Selection", windowName, &this->bestCandIdx
-		, static_cast<int>(this->candidates.size()) - 1
-		, &DocumentScanner::onSelectionChanged, this);
-		*/
-
+		
 	drawSelection();	// draw the boundaries of the paper sheet we have just found
 
 	int key = -1;
@@ -350,19 +368,6 @@ cv::Mat DocumentScanner::rectify(const cv::Mat& src, std::vector<cv::Point>& qua
 std::vector<cv::Point2f> DocumentScanner::arrangeVerticesClockwise(const std::vector<cv::Point> &quad)
 {
 	// Find the top left vertex, i.e. the closest vertex to the (0,0) corner
-
-	////int topLeftIdx = 0;
-	//cv::Point* pTopLeft = nullptr;
-	//double minDist = std::numeric_limits<double>::infinity(); //cv::norm(quad[topLeftIdx]);
-	//for (auto& p : quad)
-	//{
-	//	if (double d = cv::norm(p); d < minDist)
-	//	{
-	//		minDist = d;
-	//		pTopLeft = &p;
-	//	}
-	//}
-
 	auto accTopLeft = std::accumulate(quad.begin() + 1, quad.end(),
 		std::pair<double, const cv::Point*>(cv::norm(quad[0]), &quad[0]),
 		[&quad](const auto& acc, const auto& p) {
@@ -377,7 +382,7 @@ std::vector<cv::Point2f> DocumentScanner::arrangeVerticesClockwise(const std::ve
 	std::vector<double> angles(quad.size());
 	std::transform(quad.begin(), quad.end(), angles.begin(), [&p0 = *accTopLeft.second](const auto& p) {
 		cv::Point u = p - p0;	// the vector from p0 to p
-		cv::Point u0 = -p0;
+		cv::Point u0 = -p0;		// the vector from p0 to (0,0)
 
 		// Compute the dot product of u0 and u: u0.x*u.x+u0.y*u.y = |u0|*|u|*cos(angle)
 		int dp = u0.x * u.x + u0.y * u.y;
@@ -404,7 +409,7 @@ std::vector<cv::Point2f> DocumentScanner::arrangeVerticesClockwise(const std::ve
 	std::vector<int> indices(quad.size());
 	std::iota(indices.begin(), indices.end(), 0);
 	std::sort(indices.begin(), indices.end(), [&angles](int idx1, int idx2) {
-		return angles[idx1] < angles[idx2];
+			return angles[idx1] < angles[idx2];
 		});
 
 	std::vector<cv::Point2f> quadF;
@@ -413,12 +418,6 @@ std::vector<cv::Point2f> DocumentScanner::arrangeVerticesClockwise(const std::ve
 	{
 		quadF.push_back(quad[idx]);
 	}
-
-	/*std::vector<cv::Point2f> quadF(quad.size());	
-	for (int i = 0; i < indices.size(); ++i)
-	{
-		quadF[i] = quad[indices[i]];
-	}*/
 
 	return quadF;
 }	// arrangeVerticesClockwise
@@ -1153,9 +1152,9 @@ int main(int argc, char* argv[])
 {
 	try
 	{
-		//cv::Mat imSrc = cv::imread("./images/scanned-form.jpg", cv::IMREAD_COLOR);	// TODO: not sure what reading mode should be used
+		cv::Mat imSrc = cv::imread("./images/scanned-form.jpg", cv::IMREAD_COLOR);	// TODO: not sure what reading mode should be used
 		//cv::Mat imSrc = cv::imread("./images/mozart1.jpg", cv::IMREAD_COLOR);	// EXIF is important
-		cv::Mat imSrc = cv::imread("./images/sens2.jpg", cv::IMREAD_COLOR);	// EXIF is important
+		//cv::Mat imSrc = cv::imread("./images/sens2.jpg", cv::IMREAD_COLOR);	// EXIF is important
 
 		DocumentScanner scanner;
 		scanner.setWindowName("my");
