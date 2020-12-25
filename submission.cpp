@@ -41,7 +41,8 @@ std::vector<cv::Point> AbstractQuadDetector::detect(const cv::Mat& image) const
 
 std::vector<cv::Point> AbstractQuadDetector::selectBestCandidate(const std::vector<std::vector<cv::Point>>& candidates) const
 {
-	CV_Assert(candidates.size() == 4);
+	if (candidates.empty())
+		throw std::runtime_error("The list of candidates is empty.");
 
 	std::vector<double> rank(candidates.size(), 0);
 	int bestCandIdx = 0;
@@ -52,8 +53,11 @@ std::vector<cv::Point> AbstractQuadDetector::selectBestCandidate(const std::vect
 			if (i == j)
 				continue;
 
-			double maxDist = 0;
-			for (int v = 0; v < 4; ++v)
+			if (candidates[i].size() != candidates[j].size())
+				throw std::runtime_error("The candidates have different number of vertices.");
+
+			double maxDist = 0;			
+			for (int v = 0; v < candidates[i].size(); ++v)
 			{
 				double d = cv::norm(candidates[j][v] - candidates[i][v]);
 				maxDist = std::max(d, maxDist);
@@ -70,6 +74,94 @@ std::vector<cv::Point> AbstractQuadDetector::selectBestCandidate(const std::vect
 }	// selectBestCandidate
 
 
+// A paper sheet quad detector based on iterative thresholding of the saturation and value channels
+class IthreshPaperSheetDetector : public AbstractQuadDetector
+{
+public:
+	IthreshPaperSheetDetector(int thresholdLevels = 7)
+		: thresholdLevels(thresholdLevels)
+	{
+	}
+
+	// TODO: define copy/move semantics
+		
+private:
+	
+	virtual std::vector<std::vector<cv::Point>> detectCandidates(const cv::Mat& image) const override;
+
+	int thresholdLevels;
+};	// IthreshPaperSheetDetector
+
+
+std::vector<std::vector<cv::Point>> IthreshPaperSheetDetector::detectCandidates(const cv::Mat& src) const
+{
+	CV_Assert(src.depth() == CV_8U);
+	// TODO: can a grayscale image be converted to HSV?
+	cv::Mat srcHSV;
+	cv::cvtColor(src, srcHSV, cv::COLOR_BGR2HSV);
+
+	// Downscale and upscale the image to filter out useless details
+	cv::Mat pyr;
+	cv::pyrDown(srcHSV, pyr, cv::Size(srcHSV.cols / 2, srcHSV.rows / 2));
+	cv::pyrUp(pyr, srcHSV, srcHSV.size());
+
+	//cv::Mat1b srcChannelsHSV[3];
+	std::vector<cv::Mat1b> srcChannelsHSV;
+	cv::split(srcHSV, srcChannelsHSV);
+
+	
+	std::vector<std::vector<cv::Point>> candidates;
+
+	for (int i = 1; i < srcChannelsHSV.size(); ++i)
+	{
+		cv::Mat1b channel = srcChannelsHSV[i];
+
+		constexpr int threshLevels = 3;	// TODO: maybe add this as a parameter
+
+		for (int threshLevel = 1; threshLevel <= threshLevels; ++threshLevel)
+		{
+			cv::Mat1b channelBin;
+			cv::threshold(channel, channelBin, threshLevel * 255.0 / (threshLevels + 1.0), 255,
+				i == 1 ? cv::THRESH_BINARY_INV : cv::THRESH_BINARY);	// for a value channel use another threshold
+
+			//cv::dilate(channelBin, channelBin, cv::getStructuringElement(cv::MORPH_ELLIPSE, cv::Size(5, 5)));
+			cv::morphologyEx(channelBin, channelBin, cv::MORPH_CLOSE, cv::getStructuringElement(cv::MORPH_ELLIPSE, cv::Size(5, 5)));
+
+			//cv::imshow("test", channelBin);
+			//cv::waitKey();
+
+			double minVal, maxVal;
+			cv::minMaxLoc(channelBin, &minVal, &maxVal);
+			if (minVal > 254 || maxVal < 1)	// all black or all white
+				continue;
+
+			std::vector<std::vector<cv::Point>> contours;	// TODO: perhaps, make it local to reduce memory allocations
+			cv::findContours(channelBin, contours, cv::RETR_EXTERNAL, cv::CHAIN_APPROX_SIMPLE);
+
+			for (auto& contour : contours)
+			{
+				std::vector<cv::Point> contourApprox;
+				cv::approxPolyDP(contour, contourApprox, 0.02 * cv::arcLength(contour, true), true);
+
+				if (contourApprox.size() != 4 || !cv::isContourConvex(contourApprox))
+					continue;
+
+				double approxArea = cv::contourArea(contourApprox, false);
+
+				// TODO: perhaps, add getters and setters for min and max area factors
+				if (approxArea < 0.5 * channel.rows * channel.cols || approxArea > 0.99 * channel.rows * channel.cols)
+					continue;
+
+				candidates.push_back(contourApprox);
+			}	// for each contour
+		}	// threshLevel
+	}	// for i channel
+
+	if (candidates.empty())
+		candidates.push_back(std::vector<cv::Point>{ {0, 0}, { 0, src.rows - 1 }, { src.rows - 1, src.cols - 1 }, { 0, src.cols - 1 } });
+
+	return candidates;
+}	// detect
 
 
 class DocumentScanner
@@ -113,8 +205,9 @@ private:
 
 	cv::Mat src, srcDecorated;
 	cv::String windowName;
-	std::vector<std::vector<cv::Point>> candidates;
-	int bestCandIdx = -1;	
+	//std::vector<std::vector<cv::Point>> candidates;
+	//int bestCandIdx = -1;	
+	std::vector<cv::Point> bestQuad;
 	cv::Point* ptDragged = nullptr;		// raw pointers are fine if the pointer is non-owning
 	std::unique_ptr<AbstractQuadDetector> paperDetector = std::make_unique<IthreshPaperSheetDetector>();	// TODO: add getter/setter
 };	// DocumentScanner
@@ -133,8 +226,9 @@ void DocumentScanner::onMouseEvent(int event, int x, int y, int flags, void* use
 	{
 	case cv::EVENT_LBUTTONDOWN:
 		{
-			CV_Assert(!scanner->candidates.empty());
-			CV_Assert(scanner->bestCandIdx >= 0 && scanner->bestCandIdx < scanner->candidates.size());
+			//CV_Assert(!scanner->candidates.empty());
+			//CV_Assert(scanner->bestCandIdx >= 0 && scanner->bestCandIdx < scanner->candidates.size());
+			CV_Assert(!scanner->bestQuad.empty());
 
 			// Find the closest point
 
@@ -156,9 +250,9 @@ void DocumentScanner::onMouseEvent(int event, int x, int y, int flags, void* use
 
 			// v2			
 			cv::Point p0{ x, y };
-			//cv::Point2f p0( static_cast<float>(x), static_cast<float>(y) );
 			double minDist = std::numeric_limits<double>::infinity();
-			for (auto& p : scanner->candidates[scanner->bestCandIdx])
+			//for (auto& p : scanner->candidates[scanner->bestCandIdx])
+			for (auto& p : scanner->bestQuad)
 			{
 				if (double d = cv::norm(p - p0); d < minDist)
 				{
@@ -205,19 +299,22 @@ void DocumentScanner::onMouseEvent(int event, int x, int y, int flags, void* use
 
 void DocumentScanner::drawSelection()
 {
-	CV_Assert(this->bestCandIdx >= 0 && this->bestCandIdx < this->candidates.size());
+	//CV_Assert(this->bestCandIdx >= 0 && this->bestCandIdx < this->candidates.size());
+	CV_Assert(!this->bestQuad.empty());
 		
 	this->src.copyTo(this->srcDecorated);
 
 	// Draw the lines
 	double diag = cv::norm(cv::Point(this->src.rows, this->src.cols));
 	int lineWidth = std::max(minLineWidth, static_cast<int>(0.001 * diag));
-	cv::polylines(this->srcDecorated, this->candidates[this->bestCandIdx], true, cv::Scalar(0,255,0), lineWidth, cv::LINE_AA);
+	//cv::polylines(this->srcDecorated, this->candidates[this->bestCandIdx], true, cv::Scalar(0,255,0), lineWidth, cv::LINE_AA);
+	cv::polylines(this->srcDecorated, this->bestQuad, true, cv::Scalar(0, 255, 0), lineWidth, cv::LINE_AA);
 	
 	// Draw the vertices
 	int rInner = std::max(minPointRadius, static_cast<int>(0.007 * diag));
 	int rOuter = std::max(rInner+1, static_cast<int>(0.008 * diag));	
-	for (const auto& p : this->candidates[this->bestCandIdx])
+	//for (const auto& p : this->candidates[this->bestCandIdx])
+	for (const auto& p : this->bestQuad)
 	{
 		cv::circle(this->srcDecorated, p, rOuter, &p == this->ptDragged ? cv::Scalar(0, 255, 255) : cv::Scalar(0, 0, 0), -1, cv::LINE_AA);
 		cv::circle(this->srcDecorated, p, rInner, cv::Scalar(0,0,255), -1, cv::LINE_AA);
@@ -227,77 +324,12 @@ void DocumentScanner::drawSelection()
 
 // TODO: add a parameter to specify the algorithm
 bool DocumentScanner::prepare(const cv::Mat& src, std::vector<cv::Point>& quad)
-{
-	CV_Assert(src.depth() == CV_8U);
+{	
 	this->src = src;
-	//this->windowName = windowName;
 	this->ptDragged = nullptr;
 
-	cv::Mat srcHSV;
-	cv::cvtColor(src, srcHSV, cv::COLOR_BGR2HSV);
-
-	// Downscale and upscale the image to filter out useless details
-	cv::Mat pyr;
-	cv::pyrDown(srcHSV, pyr, cv::Size(srcHSV.cols / 2, srcHSV.rows / 2));
-	cv::pyrUp(pyr, srcHSV, srcHSV.size());
-
-	//cv::Mat1b srcChannelsHSV[3];
-	std::vector<cv::Mat1b> srcChannelsHSV;
-	cv::split(srcHSV, srcChannelsHSV);
-
-
-	this->candidates.clear();
-
-	for (int i = 1; i < srcChannelsHSV.size(); ++i)
-		//for (int i = 1; i <= 1; ++i)
-	{
-		cv::Mat1b channel = srcChannelsHSV[i];
-
-		constexpr int threshLevels = 3;	// TODO: maybe add this as a parameter
-
-		for (int threshLevel = 1; threshLevel <= threshLevels; ++threshLevel)
-		{
-			cv::Mat1b channelBin;
-			cv::threshold(channel, channelBin, threshLevel * 255.0 / (threshLevels + 1.0), 255,
-				i == 1 ? cv::THRESH_BINARY_INV : cv::THRESH_BINARY);	// for a value channel use another threshold
-
-			//cv::dilate(channelBin, channelBin, cv::getStructuringElement(cv::MORPH_ELLIPSE, cv::Size(5, 5)));
-			cv::morphologyEx(channelBin, channelBin, cv::MORPH_CLOSE, cv::getStructuringElement(cv::MORPH_ELLIPSE, cv::Size(5, 5)));
-
-			//cv::imshow("test", channelBin);
-			//cv::waitKey();
-
-			double minVal, maxVal;
-			cv::minMaxLoc(channelBin, &minVal, &maxVal);
-			if (minVal > 254 || maxVal < 1)	// all black or all white
-				continue;
-
-			std::vector<std::vector<cv::Point>> contours;
-			cv::findContours(channelBin, contours, cv::RETR_EXTERNAL, cv::CHAIN_APPROX_SIMPLE);
-			
-			for (auto& contour : contours)
-			{
-				std::vector<cv::Point> contourApprox;
-				cv::approxPolyDP(contour, contourApprox, 0.02 * cv::arcLength(contour, true), true);
-
-				if (contourApprox.size() != 4 || !cv::isContourConvex(contourApprox))
-					continue;
-
-				double approxArea = cv::contourArea(contourApprox, false);
-
-				// TODO: perhaps, add getters and setters for min and max area factors
-				if (approxArea < 0.5 * channel.rows * channel.cols	|| approxArea > 0.99 * channel.rows * channel.cols)
-					continue;
-								
-				this->candidates.push_back(contourApprox);
-			}	// for each contour
-		}	// threshLevel
-	}	// for i channel
-
-	if (this->candidates.empty())
-		this->candidates.push_back(std::vector<cv::Point>{ {0, 0}, { 0, src.rows - 1 }, { src.rows-1, src.cols-1 }, { 0, src.cols - 1 } });
-	
-
+	// Detect the paper sheet boundaries
+	this->bestQuad = quad = this->paperDetector->detect(src);
 
 	// A mouse handler will let the user move the vertices in case our automatic selection was not correct
 	cv::namedWindow(this->windowName, cv::WINDOW_AUTOSIZE);
@@ -313,9 +345,6 @@ bool DocumentScanner::prepare(const cv::Mat& src, std::vector<cv::Point>& quad)
 	} while (key < 0);
 
 	cv::destroyWindow(this->windowName);
-
-	// TODO: consider storing only the best quad in this
-	quad = this->candidates[this->bestCandIdx];
 
 	return (key & 0xFF) != 27;	// not escape
 }	// prepare
