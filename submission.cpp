@@ -293,27 +293,95 @@ bool DocumentScanner::prepare(const cv::Mat& src, std::vector<cv::Point>& quad)
 
 	cv::destroyWindow(this->windowName);
 
+	// TODO: consider storing only the best quad in this
 	quad = this->candidates[this->bestCandIdx];
 
 	return (key & 0xFF) != 27;	// not escape
 }	// prepare
 
-cv::Mat DocumentScanner::rectify(const cv::Mat& src, std::vector<cv::Point> &quad, int width, int height)
+cv::Mat DocumentScanner::rectify(const cv::Mat& src, std::vector<cv::Point>& quad, int width, int height)
 {
 	CV_Assert(!src.empty());
 	CV_Assert(quad.size() == 4);
 
 	cv::namedWindow(this->windowName, cv::WINDOW_AUTOSIZE);
 
+
+	// Find the top left vertex, i.e. the closest vertex to the (0,0) corner
+
+	////int topLeftIdx = 0;
+	//cv::Point* pTopLeft = nullptr;
+	//double minDist = std::numeric_limits<double>::infinity(); //cv::norm(quad[topLeftIdx]);
+	//for (auto& p : quad)
+	//{
+	//	if (double d = cv::norm(p); d < minDist)
+	//	{
+	//		minDist = d;
+	//		pTopLeft = &p;
+	//	}
+	//}
+
+	auto acc = std::accumulate(quad.begin() + 1, quad.end(),
+		std::pair<double, const cv::Point*>(cv::norm(quad[0]), &quad[0]),
+		[&quad](const auto& acc, const auto& p) {
+			if (double d = cv::norm(p); d < acc.first)		// distance to (0,0)
+				return std::make_pair(d, &p);
+			else
+				return acc;
+		});
+
+
+	// Compute angles between u0 = [top-left vertex, top-left corner] and the vectors from the top-left vertex to each other vertex
+	std::vector<double> angles(quad.size());
+	std::transform(quad.begin(), quad.end(), angles.begin(), [&p0 = *acc.second](const auto& p) {
+			cv::Point u = p - p0;	// the vector from p0 to p
+			cv::Point u0 = -p0;
+
+			// Compute the dot product of u0 and u: u0.x*u.x+u0.y*u.y = |u0|*|u|*cos(angle)
+			int dp = u0.x * u.x + u0.y * u.y;
+
+			// Compute the cross product of u0 and u: u0.x*u.y - u0.y*u.x = |u0|*|u|*sin(angle)
+			int cp = u0.x * u.y - u0.y * u.x;
+
+			// cp/dp = sin(angle)/cos(angle) = tan(angle)
+			// Domain error may occur if cp and dp are both zero:
+			// https://en.cppreference.com/w/cpp/numeric/math/atan2
+			double angle = cp && dp ? std::atan2(cp, dp) : 0;
+
+			if (angle < 0)	// atan2 returns values from [-pi, +pi]
+			{
+				angle += 2 * std::acos(-1.0);	// add 2*pi to obtain a positive angle
+			}
+
+			return angle;
+		});	// transform
+
+
+	// Arrange the vertices in the clockwise order starting from the top-left vertex
+
+	std::vector<int> indices(quad.size());
+	std::iota(indices.begin(), indices.end(), 0);
+	std::sort(indices.begin(), indices.end(), [&angles](int idx1, int idx2){
+			return angles[idx1] < angles[idx2];
+		});
+
+	std::vector<cv::Point2f> quadF(quad.size());
+	for (int i = 0; i < indices.size(); ++i)
+	{
+		quadF[i] = quad[indices[i]];
+	}
+
+
+
 	//std::vector<cv::Point> destVertices{ { 0,0 }, {width - 1, 0}, {width - 1, height - 1}, {0, height-1} };
 	//std::vector<cv::Point> destVertices{ { 0,0 }, {0, height - 1}, {width - 1, height - 1}, {width - 1, 0} };
-	std::vector<cv::Point> destVertices{ {width - 1, 0}, { 0,0 }, {0, height - 1}, {width - 1, height - 1} };
+	//std::vector<cv::Point> destVertices{ {width - 1, 0}, { 0,0 }, {0, height - 1}, {width - 1, height - 1} };
+	//std::vector<cv::Point2f> destVerticesF{ {width - 1.0f, 0.0f}, { 0.0f, 0.0f }, {0.0f, height - 1.0f}, {width - 1.0f, height - 1.0f} };
+	//std::vector<cv::Point2f> destVerticesF{ { 0.0f, 0.0f }, {0.0f, height - 1.0f}, {width - 1.0f, height - 1.0f}, {width - 1.0f, 0.0f} };
+	std::vector<cv::Point2f> dstQuadF{ { 0.0f, 0.0f }, {width - 1.0f, 0.0f}, {width - 1.0f, height - 1.0f}, {0.0f, height - 1.0f} };
 
-	std::vector<cv::Point2f> quadf;
-	std::vector<cv::Point2f> destvertf;
-	std::transform(quad.begin(), quad.end(), std::back_inserter(quadf), [](const cv::Point& p) { return cv::Point2f(p.x, p.y); });
-	std::transform(destVertices.begin(), destVertices.end(), std::back_inserter(destvertf), [](const cv::Point& p) { return cv::Point2f(p.x, p.y); });
 
+	/*
 	//if (cv::Mat homography = cv::findHomography(quad, destVertices); homography.empty())
 	if (cv::Mat homography = cv::findHomography(quadf, destvertf); homography.empty())
 		return src;
@@ -321,6 +389,16 @@ cv::Mat DocumentScanner::rectify(const cv::Mat& src, std::vector<cv::Point> &qua
 	{
 		cv::Mat dst = cv::Mat::zeros(cv::Size(width,height), CV_8UC3);
 		cv::warpPerspective(src, dst, homography, cv::Size(width, height));
+		return dst;
+	}
+	*/
+
+	if (cv::Mat m = cv::getPerspectiveTransform(quadF, dstQuadF); m.empty())
+		return src;		// Failed to obtain a perspective transform matrix
+	else
+	{
+		cv::Mat dst = cv::Mat::zeros(cv::Size(width, height), CV_8UC3);
+		cv::warpPerspective(src, dst, m, cv::Size(width, height));
 		return dst;
 	}
 }	// rectify
@@ -1052,8 +1130,8 @@ int main(int argc, char* argv[])
 {
 	try
 	{
-		cv::Mat imSrc = cv::imread("./images/scanned-form.jpg", cv::IMREAD_UNCHANGED);	// TODO: not sure what reading mode should be used
-		//cv::Mat imSrc = cv::imread("./images/mozart2.jpg", cv::IMREAD_UNCHANGED);	// TODO: not sure what reading mode should be used
+		//cv::Mat imSrc = cv::imread("./images/scanned-form.jpg", cv::IMREAD_UNCHANGED);	// TODO: not sure what reading mode should be used
+		cv::Mat imSrc = cv::imread("./images/mozart2.jpg", cv::IMREAD_UNCHANGED);	// TODO: not sure what reading mode should be used
 		//cv::Mat imSrc = cv::imread("./images/sunglass.png", cv::IMREAD_UNCHANGED);	// TODO: not sure what reading mode should be used
 
 		DocumentScanner scanner;
