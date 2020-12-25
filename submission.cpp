@@ -33,7 +33,7 @@ public:
 
 	cv::Mat rectify10(const cv::Mat& src);
 
-	cv::Mat rectify(const cv::Mat& src, std::vector<cv::Point> &quad, int width, int height);
+	cv::Mat rectify(const cv::Mat& src, std::vector<cv::Point> &quad, int width, int height, bool canonicalView = true);
 
 	bool prepare(const cv::Mat& src, std::vector<cv::Point> &quad);
 
@@ -46,6 +46,8 @@ private:
 	static void onMouseEvent(int event, int x, int y, int flags, void *userData);
 
 	void drawSelection();
+
+	std::vector<cv::Point2f> arrangeVerticesClockwise(const std::vector<cv::Point> &quad);
 
 	constexpr static int minPointRadius = 3;
 	constexpr static int minLineWidth = 1;
@@ -173,6 +175,7 @@ void DocumentScanner::drawSelection()
 	}	// for
 }	// drawSelection
 
+
 // TODO: add a parameter to specify the algorithm
 bool DocumentScanner::prepare(const cv::Mat& src, std::vector<cv::Point>& quad)
 {
@@ -299,14 +302,53 @@ bool DocumentScanner::prepare(const cv::Mat& src, std::vector<cv::Point>& quad)
 	return (key & 0xFF) != 27;	// not escape
 }	// prepare
 
-cv::Mat DocumentScanner::rectify(const cv::Mat& src, std::vector<cv::Point>& quad, int width, int height)
+cv::Mat DocumentScanner::rectify(const cv::Mat& src, std::vector<cv::Point>& quad, int width, int height, bool canonicalView)
 {
 	CV_Assert(!src.empty());
 	CV_Assert(quad.size() == 4);
 
 	cv::namedWindow(this->windowName, cv::WINDOW_AUTOSIZE);
 
+	// In order to perform perspective correction, the source and destination points must be consistently ordered (clockwise order is used)
+	std::vector<cv::Point2f> srcQuadF = arrangeVerticesClockwise(quad);
 
+	// In a canonical view mode the width denotes a measure of the horizontal dimension of a correctly aligned document as seen 
+	// in a frontal view, i.e. it doesn't depend on how the document is actually positioned in the input image. 
+	// Otherwise, the width corresponds to the dimension which is closer to horizontal in the input image.
+	bool rotateImage = false;
+	if (canonicalView)
+	{
+		// Estimate width and height of the document from the source image
+		double wSrc = cv::norm(srcQuadF[0] - srcQuadF[1]), hSrc = cv::norm(srcQuadF[0] - srcQuadF[3]);
+
+		// Try to determine the orientation 
+		if ((wSrc >= hSrc) != (width >= height))
+		{
+			std::swap(width, height);
+			rotateImage = true;
+		}
+	}	// canonical view
+
+	// Define the destination points in the clockwise order (must be consistent with the source points order)
+	std::vector<cv::Point2f> dstQuadF{ { 0.0f, 0.0f }, {width - 1.0f, 0.0f}, {width - 1.0f, height - 1.0f}, {0.0f, height - 1.0f} };
+
+	if (cv::Mat m = cv::getPerspectiveTransform(srcQuadF, dstQuadF); m.empty())
+		return src;		// if we failed to obtain a perspective transform matrix, just return the source image
+	else
+	{
+		// Perform perspective correction using the obtained transformation matrix 
+		cv::Mat dst; 
+		cv::warpPerspective(src, dst, m, cv::Size(width, height));
+
+		if (rotateImage)
+			cv::rotate(dst, dst, cv::ROTATE_90_CLOCKWISE);
+
+		return dst;
+	}
+}	// rectify
+
+std::vector<cv::Point2f> DocumentScanner::arrangeVerticesClockwise(const std::vector<cv::Point> &quad)
+{
 	// Find the top left vertex, i.e. the closest vertex to the (0,0) corner
 
 	////int topLeftIdx = 0;
@@ -321,7 +363,7 @@ cv::Mat DocumentScanner::rectify(const cv::Mat& src, std::vector<cv::Point>& qua
 	//	}
 	//}
 
-	auto acc = std::accumulate(quad.begin() + 1, quad.end(),
+	auto accTopLeft = std::accumulate(quad.begin() + 1, quad.end(),
 		std::pair<double, const cv::Point*>(cv::norm(quad[0]), &quad[0]),
 		[&quad](const auto& acc, const auto& p) {
 			if (double d = cv::norm(p); d < acc.first)		// distance to (0,0)
@@ -333,106 +375,56 @@ cv::Mat DocumentScanner::rectify(const cv::Mat& src, std::vector<cv::Point>& qua
 
 	// Compute angles between u0 = [top-left vertex, top-left corner] and the vectors from the top-left vertex to each other vertex
 	std::vector<double> angles(quad.size());
-	std::transform(quad.begin(), quad.end(), angles.begin(), [&p0 = *acc.second](const auto& p) {
-			cv::Point u = p - p0;	// the vector from p0 to p
-			cv::Point u0 = -p0;
+	std::transform(quad.begin(), quad.end(), angles.begin(), [&p0 = *accTopLeft.second](const auto& p) {
+		cv::Point u = p - p0;	// the vector from p0 to p
+		cv::Point u0 = -p0;
 
-			// Compute the dot product of u0 and u: u0.x*u.x+u0.y*u.y = |u0|*|u|*cos(angle)
-			int dp = u0.x * u.x + u0.y * u.y;
+		// Compute the dot product of u0 and u: u0.x*u.x+u0.y*u.y = |u0|*|u|*cos(angle)
+		int dp = u0.x * u.x + u0.y * u.y;
 
-			// Compute the cross product of u0 and u: u0.x*u.y - u0.y*u.x = |u0|*|u|*sin(angle)
-			int cp = u0.x * u.y - u0.y * u.x;
+		// Compute the cross product of u0 and u: u0.x*u.y - u0.y*u.x = |u0|*|u|*sin(angle)
+		int cp = u0.x * u.y - u0.y * u.x;
 
-			// cp/dp = sin(angle)/cos(angle) = tan(angle)
-			// Domain error may occur if cp and dp are both zero:
-			// https://en.cppreference.com/w/cpp/numeric/math/atan2
-			double angle = cp && dp ? std::atan2(cp, dp) : 0;
+		// cp/dp = sin(angle)/cos(angle) = tan(angle)
+		// Domain error may occur if cp and dp are both zero:
+		// https://en.cppreference.com/w/cpp/numeric/math/atan2
+		double angle = cp && dp ? std::atan2(cp, dp) : 0;
 
-			if (angle < 0)	// atan2 returns values from [-pi, +pi]
-			{
-				angle += 2 * std::acos(-1.0);	// add 2*pi to obtain a positive angle
-			}
+		if (angle < 0)	// atan2 returns values from [-pi, +pi]
+		{
+			angle += 2 * std::acos(-1.0);	// add 2*pi to obtain a positive angle
+		}
 
-			return angle;
-		});	// transform
+		return angle;
+	});	// transform
 
 
 	// Arrange the vertices in the clockwise order starting from the top-left vertex
 
 	std::vector<int> indices(quad.size());
 	std::iota(indices.begin(), indices.end(), 0);
-	std::sort(indices.begin(), indices.end(), [&angles](int idx1, int idx2){
-			return angles[idx1] < angles[idx2];
+	std::sort(indices.begin(), indices.end(), [&angles](int idx1, int idx2) {
+		return angles[idx1] < angles[idx2];
 		});
 
-	std::vector<cv::Point2f> quadF(quad.size());
+	std::vector<cv::Point2f> quadF;
+	quadF.reserve(quad.size());
+	for (int idx : indices)
+	{
+		quadF.push_back(quad[idx]);
+	}
+
+	/*std::vector<cv::Point2f> quadF(quad.size());	
 	for (int i = 0; i < indices.size(); ++i)
 	{
 		quadF[i] = quad[indices[i]];
-	}
+	}*/
+
+	return quadF;
+}	// arrangeVerticesClockwise
 
 
-	// TODO: add a parameter to establish width/high ordering
-	bool allowDimReordering = true;
-	bool rotateImage = false;
-	if (allowDimReordering)
-	{
-		// Estimate width and height of the document from the source image
-		double wSrc = cv::norm(quadF[0] - quadF[1]), hSrc = cv::norm(quadF[0] - quadF[3]);
 
-		// Try to determine the orientation 
-		if ((wSrc >= hSrc) != (width >= height))
-		{
-			std::swap(width, height);
-			rotateImage = true;
-		}
-
-		//double arSrc = cv::norm(quadF[0] - quadF[1]) / (cv::norm(quadF[0]-quadF[3]) + 1e-8);
-		//double arDst1 = width / (height + 1e-8);
-		//double arDst2 = height / (width + 1e-8);
-
-		//// Which orientation is more similar to our image
-		//if (std::abs(arSrc - arDst1) > std::abs(arSrc - arDst2))
-		//{
-		//	std::swap(width, height);
-		//	rotateImage = true;
-		//}
-	}
-
-	//std::vector<cv::Point> destVertices{ { 0,0 }, {width - 1, 0}, {width - 1, height - 1}, {0, height-1} };
-	//std::vector<cv::Point> destVertices{ { 0,0 }, {0, height - 1}, {width - 1, height - 1}, {width - 1, 0} };
-	//std::vector<cv::Point> destVertices{ {width - 1, 0}, { 0,0 }, {0, height - 1}, {width - 1, height - 1} };
-	//std::vector<cv::Point2f> destVerticesF{ {width - 1.0f, 0.0f}, { 0.0f, 0.0f }, {0.0f, height - 1.0f}, {width - 1.0f, height - 1.0f} };
-	//std::vector<cv::Point2f> dstQuadF{ { 0.0f, 0.0f }, {0.0f, height - 1.0f}, {width - 1.0f, height - 1.0f}, {width - 1.0f, 0.0f} };
-	
-	std::vector<cv::Point2f> dstQuadF{ { 0.0f, 0.0f }, {width - 1.0f, 0.0f}, {width - 1.0f, height - 1.0f}, {0.0f, height - 1.0f} };
-
-
-	/*
-	//if (cv::Mat homography = cv::findHomography(quad, destVertices); homography.empty())
-	if (cv::Mat homography = cv::findHomography(quadf, destvertf); homography.empty())
-		return src;
-	else
-	{
-		cv::Mat dst = cv::Mat::zeros(cv::Size(width,height), CV_8UC3);
-		cv::warpPerspective(src, dst, homography, cv::Size(width, height));
-		return dst;
-	}
-	*/
-
-	if (cv::Mat m = cv::getPerspectiveTransform(quadF, dstQuadF); m.empty())
-		return src;		// Failed to obtain a perspective transform matrix
-	else
-	{
-		cv::Mat dst = cv::Mat::zeros(cv::Size(width, height), CV_8UC3);
-		cv::warpPerspective(src, dst, m, cv::Size(width, height));
-
-		if (rotateImage)
-			cv::rotate(dst, dst, cv::ROTATE_90_CLOCKWISE);
-
-		return dst;
-	}
-}	// rectify
 
 cv::Mat DocumentScanner::rectify10(const cv::Mat& src)
 {
