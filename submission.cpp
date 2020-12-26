@@ -44,13 +44,54 @@ std::vector<cv::Point> AbstractQuadDetector::detect(const cv::Mat& image) const
 class AbstractPaperSheetDetector : public AbstractQuadDetector
 {
 public:
+
+	constexpr double getMinAreaPct() const noexcept { return this->minAreaPct; }
+	constexpr void setMinAreaPct(double minAreaPct) 
+	{ 
+		this->minAreaPct = minAreaPct>=0 && minAreaPct<=this->maxAreaPct ? 
+			minAreaPct : throw std::invalid_argument("Min area percentage must be in range 0..<max area percentage>."); 
+	}
+
+	constexpr double getMaxAreaPct() const noexcept { return this->maxAreaPct; }
+	constexpr void setMaxAreaPct(double maxAreaPct) 
+	{ 
+		this->maxAreaPct = maxAreaPct>=this->minAreaPct && maxAreaPct<=1 ? 
+			maxAreaPct : throw std::invalid_argument("Max area percentage must be in range <min area percentage>..1."); 
+	}
+
+	constexpr void setAreaPctRange(double minAreaPct, double maxAreaPct)
+	{
+		this->minAreaPct = minAreaPct >= 0 && minAreaPct <= maxAreaPct ? minAreaPct : throw std::invalid_argument("Min area percentage must be in range 0..<max area percentage>.");
+		this->maxAreaPct = maxAreaPct >= minAreaPct && maxAreaPct <= 1 ? maxAreaPct : throw std::invalid_argument("Max area percentage must be in range <min area percentage>..1.");
+	}
+
+	constexpr double getApproximationAccuracyPct() const noexcept { return this->approxAccuracyPct; }
+	constexpr void setApproximationAccuracyPct(double approxAccuracyPct) 
+	{ 
+		this->approxAccuracyPct = approxAccuracyPct >= 0 ? approxAccuracyPct : throw std::invalid_argument("Approximation accuracy percentage can't be negative."); 
+	}
+
 protected:
+
+	constexpr AbstractPaperSheetDetector(double minAreaPct = 0.5, double maxAreaPct = 0.99, double approximationAccuracyPct = 0.02);
+
 	// Approximate the contours and remove inappropriate ones
 	virtual std::vector<std::vector<cv::Point>> refineContours(const std::vector<std::vector<cv::Point>>& contours, const cv::Mat &image) const;
 
 private:
 	virtual std::vector<cv::Point> selectBestCandidate(const std::vector<std::vector<cv::Point>>& candidates) const override; 
+
+	double minAreaPct, maxAreaPct;	// the min and max fractions of the image area that the paper sheet must occupy to be considered for detection
+	double approxAccuracyPct;	// the fraction of the contour length which defines the maximum distance between the original curve and its approximation
 };	// AbstractPaperSheetDetector
+
+
+constexpr AbstractPaperSheetDetector::AbstractPaperSheetDetector(double minAreaPct, double maxAreaPct, double approxAccuracyPct) 
+	: minAreaPct(minAreaPct>=0 && minAreaPct<=1 ? minAreaPct : throw std::invalid_argument("Min area percentage must be in range 0..1."))
+	, maxAreaPct(maxAreaPct>=minAreaPct && maxAreaPct<=1 ? maxAreaPct : throw std::invalid_argument("Max area percentage must be in range <min area percentage>..1"))
+	, approxAccuracyPct(approxAccuracyPct>=0 ? approxAccuracyPct : throw std::invalid_argument("Approximation accuracy percentage can't be negative."))
+{
+}
 
 std::vector<std::vector<cv::Point>> AbstractPaperSheetDetector::refineContours(const std::vector<std::vector<cv::Point>>& contours, const cv::Mat &image) const
 {
@@ -59,17 +100,16 @@ std::vector<std::vector<cv::Point>> AbstractPaperSheetDetector::refineContours(c
 	std::vector<std::vector<cv::Point>> refinedContours;
 	for (const auto& contour : contours)
 	{
-		// TODO: perhaps, add a getter/setter for approximation quality
 		std::vector<cv::Point> contourApprox;
-		cv::approxPolyDP(contour, contourApprox, 0.02 * cv::arcLength(contour, true), true);
+		cv::approxPolyDP(contour, contourApprox, this->approxAccuracyPct * cv::arcLength(contour, true), true);
 
 		if (contourApprox.size() != 4 || !cv::isContourConvex(contourApprox))
 			continue;
 
 		double approxArea = cv::contourArea(contourApprox, false);
 
-		// TODO: perhaps, add getters and setters for min and max area factors
-		if (approxArea < 0.5*imageArea || approxArea > 0.99*imageArea)
+		//if (approxArea < 0.5*imageArea || approxArea > 0.99*imageArea)
+		if (approxArea < this->minAreaPct*imageArea || approxArea > this->maxAreaPct*imageArea)
 			continue;
 
 		refinedContours.push_back(std::move(contourApprox));
@@ -196,9 +236,6 @@ std::vector<std::vector<cv::Point>> IthreshPaperSheetDetector::detectCandidates(
 			//cv::dilate(channelBin, channelBin, cv::getStructuringElement(cv::MORPH_ELLIPSE, cv::Size(5, 5)));
 			cv::morphologyEx(channelBin, channelBin, cv::MORPH_CLOSE, cv::getStructuringElement(cv::MORPH_ELLIPSE, cv::Size(5, 5)));
 
-			//cv::imshow("test", channelBin);
-			//cv::waitKey();
-
 			double minVal, maxVal;
 			cv::minMaxLoc(channelBin, &minVal, &maxVal);
 			if (minVal > 254 || maxVal < 1)	// all black or all white
@@ -209,26 +246,6 @@ std::vector<std::vector<cv::Point>> IthreshPaperSheetDetector::detectCandidates(
 
 			auto&& refinedContours = refineContours(contours, channelBin);
 			std::move(refinedContours.begin(), refinedContours.end(), std::back_inserter(candidates));
-
-			/*
-			for (const auto& contour : contours)
-			{
-				// TODO: perhaps, add a getter/setter for approximation quality
-				std::vector<cv::Point> contourApprox;
-				cv::approxPolyDP(contour, contourApprox, 0.02 * cv::arcLength(contour, true), true);
-
-				if (contourApprox.size() != 4 || !cv::isContourConvex(contourApprox))
-					continue;
-
-				double approxArea = cv::contourArea(contourApprox, false);
-
-				// TODO: perhaps, add getters and setters for min and max area factors
-				if (approxArea < 0.5 * channel.rows * channel.cols || approxArea > 0.99 * channel.rows * channel.cols)
-					continue;
-
-				candidates.push_back(std::move(contourApprox));
-			}	// for each contour
-			*/
 		}	// threshLevel
 	}	// for i channel
 
@@ -275,39 +292,13 @@ std::vector<std::vector<cv::Point>> SavaldoPaperSheetDetector::detectCandidates(
 
 	cv::Mat1b srcBin;
 	cv::inRange(srcHSV, cv::Scalar{ 0, dominantSat - meanDev[1], dominantVal - meanDev[2] }, cv::Scalar{ 179, dominantSat + meanDev[1], dominantVal + meanDev[2] }, srcBin);
-	//cv::imshow("test", srcBin);
-	//cv::waitKey();
 
 	std::vector<std::vector<cv::Point>> contours;
 	std::vector<cv::Vec4i> hierarchy;
 	cv::findContours(srcBin, contours, hierarchy, cv::RETR_EXTERNAL, cv::CHAIN_APPROX_SIMPLE);
-
-	
-	/*auto it = std::max_element(contours.begin(), contours.end(), [](const auto& c1, const auto& c2) { return cv::contourArea(c1) < cv::contourArea(c2); });
-	int contourIndex = it - contours.begin();
-	cv::Mat srcCopy = src.clone();
-	cv::drawContours(srcCopy, contours, contourIndex, cv::Scalar(0, 255, 0), 4);
-	cv::imshow("test", srcCopy);
-	cv::waitKey();*/
-
+		
 	std::vector<std::vector<cv::Point>> candidates = refineContours(contours, src);
-	/*for (const auto &contour : contours)
-	{
-		std::vector<cv::Point> contourApprox;
-		cv::approxPolyDP(contour, contourApprox, 0.02*cv::arcLength(contour, true), true);
-
-		if (contourApprox.size() != 4 || !cv::isContourConvex(contourApprox))
-			continue;
-
-		candidates.push_back(std::move(contourApprox));
-	}	// contours
-	*/
-
-	/*srcCopy = src.clone();
-	cv::drawContours(srcCopy, candidates, -1, cv::Scalar(0, 255, 0), 4, cv::LINE_AA);
-	cv::imshow("test", srcCopy);
-	cv::waitKey();*/
-
+	
 	if (candidates.empty())
 		candidates.push_back(std::vector<cv::Point>{ {0, 0}, { 0, src.rows - 1 }, { src.cols - 1, src.rows - 1 }, { src.cols - 1, 0 } });
 
@@ -613,8 +604,9 @@ int main(int argc, char* argv[])
 	try
 	{
 		//cv::Mat imSrc = cv::imread("./images/scanned-form.jpg", cv::IMREAD_COLOR);	// TODO: not sure what reading mode should be used
-		//cv::Mat imSrc = cv::imread("./images/mozart2.jpg", cv::IMREAD_COLOR);	// EXIF is important
-		cv::Mat imSrc = cv::imread("./images/sens2.jpg", cv::IMREAD_COLOR);	// EXIF is important
+		cv::Mat imSrc = cv::imread("./images/mozart2.jpg", cv::IMREAD_COLOR);	// EXIF is important
+		//cv::Mat imSrc = cv::imread("./images/sens2.jpg", cv::IMREAD_COLOR);	// EXIF is important
+
 
 		DocumentScanner scanner;
 		scanner.setWindowName("my");
