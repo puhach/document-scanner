@@ -18,7 +18,7 @@
 *
 *************************************************************************************/
 
-// The parent class for detectors which return a quad rather than a bounding box
+// A parent class for detectors which return a quad rather than a bounding box
 class AbstractQuadDetector
 {
 public:
@@ -31,7 +31,7 @@ public:
 
 private:
 	virtual std::vector<std::vector<cv::Point>> detectCandidates(const cv::Mat& image) const = 0;
-	virtual std::vector<cv::Point> selectBestCandidate(const std::vector<std::vector<cv::Point>>& candidates) const;
+	virtual std::vector<cv::Point> selectBestCandidate(const std::vector<std::vector<cv::Point>>& candidates) const = 0;
 };	// AbstractQuadDetector
 
 std::vector<cv::Point> AbstractQuadDetector::detect(const cv::Mat& image) const
@@ -39,7 +39,16 @@ std::vector<cv::Point> AbstractQuadDetector::detect(const cv::Mat& image) const
 	return selectBestCandidate(detectCandidates(image));
 }
 
-std::vector<cv::Point> AbstractQuadDetector::selectBestCandidate(const std::vector<std::vector<cv::Point>>& candidates) const
+
+// A parent class for paper sheet detectors
+class AbstractPaperSheetDetector : public AbstractQuadDetector
+{
+public:
+private:
+	virtual std::vector<cv::Point> selectBestCandidate(const std::vector<std::vector<cv::Point>>& candidates) const override; 
+};	// AbstractPaperSheetDetector
+
+std::vector<cv::Point> AbstractPaperSheetDetector::selectBestCandidate(const std::vector<std::vector<cv::Point>>& candidates) const
 {
 	if (candidates.empty())
 		throw std::runtime_error("The list of candidates is empty.");
@@ -75,7 +84,7 @@ std::vector<cv::Point> AbstractQuadDetector::selectBestCandidate(const std::vect
 
 
 // A paper sheet quad detector based on iterative thresholding of the saturation and value channels
-class IthreshPaperSheetDetector : public AbstractQuadDetector
+class IthreshPaperSheetDetector : public AbstractPaperSheetDetector
 {
 public:
 	IthreshPaperSheetDetector(int thresholdLevels = 7)
@@ -140,6 +149,7 @@ std::vector<std::vector<cv::Point>> IthreshPaperSheetDetector::detectCandidates(
 
 			for (auto& contour : contours)
 			{
+				// TODO: perhaps, add a getter/setter for approximation quality
 				std::vector<cv::Point> contourApprox;
 				cv::approxPolyDP(contour, contourApprox, 0.02 * cv::arcLength(contour, true), true);
 
@@ -162,6 +172,9 @@ std::vector<std::vector<cv::Point>> IthreshPaperSheetDetector::detectCandidates(
 
 	return candidates;
 }	// detect
+
+
+
 
 
 class DocumentScanner
