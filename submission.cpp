@@ -301,6 +301,7 @@ std::vector<std::vector<cv::Point>> IthreshPaperSheetDetector::detectCandidates(
 	return candidates;
 }	// detectCandidates
 
+
 // A paper sheet detector based on a dominant saturation-value pair
 class SavaldoPaperSheetDetector : public AbstractPaperSheetDetector
 {
@@ -387,7 +388,7 @@ std::vector<std::vector<cv::Point>> SavaldoPaperSheetDetector::detectCandidates(
 class DocumentScanner
 {
 public:
-	DocumentScanner() = default;	// TODO: perhaps, add a window parameter
+	DocumentScanner(const std::string& windowName, std::unique_ptr<AbstractPaperSheetDetector> paperDetector = std::make_unique<IthreshPaperSheetDetector>());
 
 	// Copying is not allowed to prevent multiple instances using the same window.
 	// Move operations change the address of the document scanner pointer, which is passed to setMouseCallback. Therefore any function that needs 
@@ -400,8 +401,8 @@ public:
 	DocumentScanner& operator = (const DocumentScanner& other) = delete;
 	DocumentScanner& operator = (DocumentScanner&& other) = default;
 
-	const cv::String& getWindowName() const noexcept { return this->windowName; }
-	void setWindowName(const cv::String& windowName) { this->windowName = windowName; }
+	const std::string& getWindowName() const noexcept { return this->windowName; }
+	void setWindowName(const std::string& windowName) { this->windowName = windowName; }
 
 	bool isViewInvariant() const noexcept { return this->viewInvariant; }
 	void setViewInvariantMode(bool viewInvariant) noexcept { this->viewInvariant = viewInvariant; }
@@ -425,35 +426,20 @@ private:
 	constexpr static int minPointRadius = 3;
 	constexpr static int minLineWidth = 1;
 
-	std::unique_ptr<AbstractPaperSheetDetector> paperDetector = std::make_unique<IthreshPaperSheetDetector>();
-	cv::Mat src, srcDecorated;
-	cv::String windowName;
+	std::string windowName;
+	std::unique_ptr<AbstractPaperSheetDetector> paperDetector; // = std::make_unique<IthreshPaperSheetDetector>();
+	//cv::String windowName;
 	bool viewInvariant = true;
+	cv::Mat src, srcDecorated;
 	std::vector<cv::Point> bestQuad;
 	cv::Point* ptDragged = nullptr;		// raw pointers are fine if the pointer is non-owning	
 };	// DocumentScanner
 
-//// TODO: so far it's identical to default move constructor
-//DocumentScanner::DocumentScanner(DocumentScanner&& other)
-//	: paperDetector(std::move(other.paperDetector))
-//	, src(std::move(other.src))
-//	, srcDecorated(std::move(other.srcDecorated))
-//	, windowName(std::move(other.windowName))
-//	, bestQuad(std::move(other.bestQuad))
-//	, ptDragged(other.ptDragged)	// memory address might have changed, but we know that nothing can be selected at this point
-//{
-//	
-//}
-//
-//DocumentScanner& DocumentScanner::operator = (DocumentScanner&& other)
-//{
-//	this->paperDetector = std::move(other.paperDetector);
-//	this->src = std::move()
-//	...
-//	this->bestQuad = std::move(other.bestQuad);
-//	this->ptDragged = other.ptDragged;
-//	return *this;
-//}
+DocumentScanner::DocumentScanner(const std::string& windowName, std::unique_ptr<AbstractPaperSheetDetector> paperDetector)
+	: windowName(windowName)
+	, paperDetector(std::move(paperDetector))
+{
+}
 
 bool DocumentScanner::prepare(const cv::Mat& src, std::vector<cv::Point>& quad)
 {	
@@ -727,8 +713,8 @@ int main(int argc, char* argv[])
 		//cv::Mat imSrc = cv::imread("./images/mozart2.jpg", cv::IMREAD_COLOR);	// EXIF is important
 		//cv::Mat imSrc = cv::imread("./images/sens2.jpg", cv::IMREAD_COLOR);	// EXIF is important
 
-		DocumentScanner scanner;	
-		scanner.setWindowName("my");	// TODO: perhaps, pass a file name as a window title
+		DocumentScanner scanner("my");	
+		//scanner.setWindowName("my");	// TODO: perhaps, pass a file name as a window title
 		
 		auto det = std::make_unique<IthreshPaperSheetDetector>();
 		det->setThresholdLevels(5);
