@@ -1,4 +1,5 @@
 #include <iostream>
+#include <memory>
 #include <vector>
 #include <algorithm>
 #include <numeric>
@@ -25,11 +26,22 @@ public:
 	virtual ~AbstractQuadDetector() = default;
 	// TODO: define copy/move semantics
 
-	//virtual std::vector<cv::Point> detect(const cv::Mat &image) = 0;	// TODO: perhaps, make it const?
-
 	std::vector<cv::Point> detect(const cv::Mat& image) const;
 
-private:
+	std::unique_ptr<AbstractQuadDetector> clone() const { return createClone(); }	// NVI idiom
+
+protected:
+	AbstractQuadDetector() = default;
+	
+	// Restrict copy/move operations since this is a polymorphic type
+	AbstractQuadDetector(const AbstractQuadDetector&) = default;
+	AbstractQuadDetector(AbstractQuadDetector&&) = default;
+
+	AbstractQuadDetector& operator = (const AbstractQuadDetector&) = delete;
+	AbstractQuadDetector& operator = (AbstractQuadDetector&&) = delete;
+
+private:	
+	virtual std::unique_ptr<AbstractQuadDetector> createClone() const = 0;
 	virtual std::vector<std::vector<cv::Point>> detectCandidates(const cv::Mat& image) const = 0;
 	virtual std::vector<cv::Point> selectBestCandidate(const std::vector<std::vector<cv::Point>>& candidates) const = 0;
 };	// AbstractQuadDetector
@@ -75,8 +87,16 @@ public:
 	}
 
 protected:
-
 	constexpr AbstractPaperSheetDetector(double minAreaPct = 0.5, double maxAreaPct = 0.99, double approximationAccuracyPct = 0.02);
+
+	// Restrict copy/move operations since this is a polymorphic type
+
+	AbstractPaperSheetDetector(const AbstractPaperSheetDetector&) = default;
+	AbstractPaperSheetDetector(AbstractPaperSheetDetector&&) = default;
+
+	AbstractPaperSheetDetector& operator = (const AbstractPaperSheetDetector&) = delete;
+	AbstractPaperSheetDetector& operator = (AbstractPaperSheetDetector&&) = delete;
+		
 
 	// Approximate the contours and remove inappropriate ones
 	virtual std::vector<std::vector<cv::Point>> refineContours(const std::vector<std::vector<cv::Point>>& contours, const cv::Mat &image) const;
@@ -203,15 +223,30 @@ public:
 			thresholdLevels : throw std::invalid_argument("The number of threshold levels must be in range 1..255."); 
 	}
 
-	// TODO: define copy/move semantics
-		
+protected:
+
+	// Restrict copy/move operations since this is a polymorphic type
+
+	IthreshPaperSheetDetector(const IthreshPaperSheetDetector&) = default;
+	IthreshPaperSheetDetector(IthreshPaperSheetDetector&&) = default;
+
+	IthreshPaperSheetDetector& operator = (const IthreshPaperSheetDetector&) = delete;
+	IthreshPaperSheetDetector& operator = (IthreshPaperSheetDetector&&) = delete;
+
 private:
 	
+	virtual std::unique_ptr<AbstractQuadDetector> createClone() const override;
+
 	virtual std::vector<std::vector<cv::Point>> detectCandidates(const cv::Mat& image) const override;
 
 	int thresholdLevels;
 };	// IthreshPaperSheetDetector
 
+
+std::unique_ptr<AbstractQuadDetector> IthreshPaperSheetDetector::createClone() const
+{
+	return std::unique_ptr<AbstractQuadDetector>(new IthreshPaperSheetDetector(*this));
+}	// createClone
 
 std::vector<std::vector<cv::Point>> IthreshPaperSheetDetector::detectCandidates(const cv::Mat& src) const
 {
@@ -270,10 +305,31 @@ std::vector<std::vector<cv::Point>> IthreshPaperSheetDetector::detectCandidates(
 class SavaldoPaperSheetDetector : public AbstractPaperSheetDetector
 {
 public:
+
+protected:
+	SavaldoPaperSheetDetector() = default;	// TODO: do we need any parameters
+
+	// Restrict copy/move operations since it's a polymorphic type
+
+	SavaldoPaperSheetDetector(const SavaldoPaperSheetDetector&) = default;
+	SavaldoPaperSheetDetector(SavaldoPaperSheetDetector&&) = default;
+
+	SavaldoPaperSheetDetector& operator = (const SavaldoPaperSheetDetector&) = delete;
+	SavaldoPaperSheetDetector& operator = (SavaldoPaperSheetDetector&&) = delete;
+
 private:
+
+	virtual std::unique_ptr<AbstractQuadDetector> createClone() const;
+
 	virtual std::vector<std::vector<cv::Point>> detectCandidates(const cv::Mat& image) const override;
 	//virtual std::vector<cv::Point> selectBestCandidate(const std::vector<std::vector<cv::Point>>& candidates) const override;
 };	// SavaldoPaperSheetDetector
+
+
+std::unique_ptr<AbstractQuadDetector> SavaldoPaperSheetDetector::createClone() const
+{
+	return std::unique_ptr<AbstractQuadDetector>(new SavaldoPaperSheetDetector(*this));
+}
 
 std::vector<std::vector<cv::Point>> SavaldoPaperSheetDetector::detectCandidates(const cv::Mat& src) const
 {
