@@ -305,10 +305,10 @@ std::vector<std::vector<cv::Point>> IthreshPaperSheetDetector::detectCandidates(
 class SavaldoPaperSheetDetector : public AbstractPaperSheetDetector
 {
 public:
-
-protected:
 	SavaldoPaperSheetDetector() = default;	// TODO: do we need any parameters
 
+protected:
+	
 	// Restrict copy/move operations since it's a polymorphic type
 
 	SavaldoPaperSheetDetector(const SavaldoPaperSheetDetector&) = default;
@@ -388,7 +388,16 @@ class DocumentScanner
 public:
 	DocumentScanner() = default;	// TODO: perhaps, add a window parameter
 
-	// TODO: implement copy/move semantics
+	// Copying is not allowed to prevent multiple instances using the same window.
+	// Move operations change the address of the document scanner pointer, which is passed to setMouseCallback. Therefore any function that needs 
+	// mouse handling has to call setMouseCallback after move. We also have to take care that the old handler doesn't get called any longer. 
+	// The ptDragged is a non-owning pointer to the selected vertex from the bestQuad vector. This address is supposed to stay the same after move, 
+	// but we reset it in the beginning of the prepare function anyway.
+	DocumentScanner(const DocumentScanner& other) = delete;
+	DocumentScanner(DocumentScanner&& other) = default;
+
+	DocumentScanner& operator = (const DocumentScanner& other) = delete;
+	DocumentScanner& operator = (DocumentScanner&& other) = default;
 
 	const cv::String& getWindowName() const noexcept { return this->windowName; }
 	void setWindowName(const cv::String& windowName) { this->windowName = windowName; }
@@ -419,6 +428,27 @@ private:
 	cv::Point* ptDragged = nullptr;		// raw pointers are fine if the pointer is non-owning	
 };	// DocumentScanner
 
+//// TODO: so far it's identical to default move constructor
+//DocumentScanner::DocumentScanner(DocumentScanner&& other)
+//	: paperDetector(std::move(other.paperDetector))
+//	, src(std::move(other.src))
+//	, srcDecorated(std::move(other.srcDecorated))
+//	, windowName(std::move(other.windowName))
+//	, bestQuad(std::move(other.bestQuad))
+//	, ptDragged(other.ptDragged)	// memory address might have changed, but we know that nothing can be selected at this point
+//{
+//	
+//}
+//
+//DocumentScanner& DocumentScanner::operator = (DocumentScanner&& other)
+//{
+//	this->paperDetector = std::move(other.paperDetector);
+//	this->src = std::move()
+//	...
+//	this->bestQuad = std::move(other.bestQuad);
+//	this->ptDragged = other.ptDragged;
+//	return *this;
+//}
 
 bool DocumentScanner::prepare(const cv::Mat& src, std::vector<cv::Point>& quad)
 {	
@@ -426,7 +456,26 @@ bool DocumentScanner::prepare(const cv::Mat& src, std::vector<cv::Point>& quad)
 	this->ptDragged = nullptr;
 
 	// Detect the paper sheet boundaries
-	this->bestQuad = quad = this->paperDetector->detect(src);
+	this->bestQuad = this->paperDetector->detect(src);
+
+	//struct WindowRAII
+	//{
+	//	WindowRAII(const std::string &windowName, DocumentScanner *scanner)
+	//		: windowName(windowName)
+	//	{
+	//		// A mouse handler will let the user move the vertices in case our automatic selection was not correct
+	//		cv::namedWindow(windowName, cv::WINDOW_AUTOSIZE);
+	//		cv::setMouseCallback(windowName, &DocumentScanner::onMouseEvent, scanner);
+	//	}
+
+	//	~WindowRAII()
+	//	{
+	//		cv::destroyWindow(windowName);
+	//	}
+
+	//	const std::string& windowName;
+	//} windowRAII(this->windowName, this);
+
 
 	// A mouse handler will let the user move the vertices in case our automatic selection was not correct
 	cv::namedWindow(this->windowName, cv::WINDOW_AUTOSIZE);
@@ -439,9 +488,16 @@ bool DocumentScanner::prepare(const cv::Mat& src, std::vector<cv::Point>& quad)
 	{
 		cv::imshow(this->windowName, this->srcDecorated);
 		key = cv::waitKey(10);
+
+		// TEST!
+		if ((key & 0xFF) == 101)
+			throw std::runtime_error("My test exception");
 	} while (key < 0);
 
-	cv::destroyWindow(this->windowName);
+	cv::setMouseCallback(this->windowName, nullptr);	// disable mouse handling
+
+	// A user might have moved the points
+	quad = this->bestQuad;
 
 	return (key & 0xFF) != 27;	// not escape
 }	// prepare
@@ -555,6 +611,7 @@ std::vector<cv::Point2f> DocumentScanner::arrangeVerticesClockwise(const std::ve
 
 bool DocumentScanner::display(const cv::Mat& image)
 {
+	cv::setMouseCallback(this->windowName, nullptr);	// make sure that mouse handling is disabled
 	cv::imshow(this->windowName, image);
 	return (cv::waitKey() & 0xFF) != 27;
 }
@@ -671,12 +728,12 @@ int main(int argc, char* argv[])
 		cv::Mat imSrc = cv::imread("./images/mozart2.jpg", cv::IMREAD_COLOR);	// EXIF is important
 		//cv::Mat imSrc = cv::imread("./images/sens2.jpg", cv::IMREAD_COLOR);	// EXIF is important
 
-
-		DocumentScanner scanner;
-		scanner.setWindowName("my");
-		//scanner.setDetector(std::make_unique<SavaldoPaperSheetDetector>());		// TEST!
+		DocumentScanner scanner;	
+		scanner.setWindowName("my");	// TODO: perhaps, pass a file name as a window title
+		scanner.setDetector(std::make_unique<SavaldoPaperSheetDetector>());		// TEST!
+		
 		std::vector<cv::Point> quad;
-		if (scanner.prepare(imSrc, quad))	// TODO: perhaps, pass a file name as a window title
+		if (scanner.prepare(imSrc, quad))
 		{
 			cv::Mat out = scanner.rectify(imSrc, quad, 500, 707);
 			scanner.display(out);
