@@ -46,6 +46,7 @@ class AbstractPaperSheetDetector : public AbstractQuadDetector
 public:
 
 	constexpr double getMinAreaPct() const noexcept { return this->minAreaPct; }
+
 	constexpr void setMinAreaPct(double minAreaPct) 
 	{ 
 		this->minAreaPct = minAreaPct>=0 && minAreaPct<=this->maxAreaPct ? 
@@ -53,6 +54,7 @@ public:
 	}
 
 	constexpr double getMaxAreaPct() const noexcept { return this->maxAreaPct; }
+
 	constexpr void setMaxAreaPct(double maxAreaPct) 
 	{ 
 		this->maxAreaPct = maxAreaPct>=this->minAreaPct && maxAreaPct<=1 ? 
@@ -66,6 +68,7 @@ public:
 	}
 
 	constexpr double getApproximationAccuracyPct() const noexcept { return this->approxAccuracyPct; }
+
 	constexpr void setApproximationAccuracyPct(double approxAccuracyPct) 
 	{ 
 		this->approxAccuracyPct = approxAccuracyPct >= 0 ? approxAccuracyPct : throw std::invalid_argument("Approximation accuracy percentage can't be negative."); 
@@ -187,9 +190,17 @@ std::vector<cv::Point> AbstractPaperSheetDetector::selectBestCandidate(const std
 class IthreshPaperSheetDetector : public AbstractPaperSheetDetector
 {
 public:
-	IthreshPaperSheetDetector(int thresholdLevels = 7)
-		: thresholdLevels(thresholdLevels)
+	constexpr IthreshPaperSheetDetector(int thresholdLevels = 7)
+		: thresholdLevels(thresholdLevels>=1 && thresholdLevels<=255 ? thresholdLevels : throw std::invalid_argument("The number of threshold levels must be in range 1..255."))
 	{
+	}
+
+	constexpr int getThresholdLevels() const noexcept { return this->thresholdLevels; }
+
+	constexpr void setThresholdLevels(int thresholdLevels) 
+	{ 
+		this->thresholdLevels = thresholdLevels >= 1 && thresholdLevels <= 255 ? 
+			thresholdLevels : throw std::invalid_argument("The number of threshold levels must be in range 1..255."); 
 	}
 
 	// TODO: define copy/move semantics
@@ -225,12 +236,10 @@ std::vector<std::vector<cv::Point>> IthreshPaperSheetDetector::detectCandidates(
 	{
 		cv::Mat1b channel = srcChannelsHSV[i];
 
-		constexpr int threshLevels = 3;	// TODO: maybe add this as a parameter
-
-		for (int threshLevel = 1; threshLevel <= threshLevels; ++threshLevel)
+		for (int threshLevel = 1; threshLevel <= this->thresholdLevels; ++threshLevel)
 		{
 			cv::Mat1b channelBin;
-			cv::threshold(channel, channelBin, threshLevel * 255.0 / (threshLevels + 1.0), 255,
+			cv::threshold(channel, channelBin, threshLevel * 255.0 / (this->thresholdLevels + 1.0), 255,
 				i == 1 ? cv::THRESH_BINARY_INV : cv::THRESH_BINARY);	// for a value channel use another threshold
 
 			//cv::dilate(channelBin, channelBin, cv::getStructuringElement(cv::MORPH_ELLIPSE, cv::Size(5, 5)));
@@ -249,6 +258,7 @@ std::vector<std::vector<cv::Point>> IthreshPaperSheetDetector::detectCandidates(
 		}	// threshLevel
 	}	// for i channel
 
+	// TODO: test it
 	if (candidates.empty())
 		candidates.push_back(std::vector<cv::Point>{ {0, 0}, { 0, src.rows - 1 }, { src.cols - 1, src.rows - 1 }, { src.cols - 1, 0 } });
 		//candidates.push_back(std::vector<cv::Point>{ {0, 0}, { 0, src.rows - 1 }, { src.rows - 1, src.cols - 1 }, { 0, src.cols - 1 } });
@@ -346,13 +356,11 @@ private:
 	constexpr static int minPointRadius = 3;
 	constexpr static int minLineWidth = 1;
 
+	std::unique_ptr<AbstractPaperSheetDetector> paperDetector = std::make_unique<IthreshPaperSheetDetector>();
 	cv::Mat src, srcDecorated;
 	cv::String windowName;
-	//std::vector<std::vector<cv::Point>> candidates;
-	//int bestCandIdx = -1;	
 	std::vector<cv::Point> bestQuad;
-	cv::Point* ptDragged = nullptr;		// raw pointers are fine if the pointer is non-owning
-	std::unique_ptr<AbstractPaperSheetDetector> paperDetector = std::make_unique<IthreshPaperSheetDetector>();	// TODO: add getter/setter
+	cv::Point* ptDragged = nullptr;		// raw pointers are fine if the pointer is non-owning	
 };	// DocumentScanner
 
 
@@ -610,7 +618,7 @@ int main(int argc, char* argv[])
 
 		DocumentScanner scanner;
 		scanner.setWindowName("my");
-		scanner.setDetector(std::make_unique<SavaldoPaperSheetDetector>());		// TEST!
+		//scanner.setDetector(std::make_unique<SavaldoPaperSheetDetector>());		// TEST!
 		std::vector<cv::Point> quad;
 		if (scanner.prepare(imSrc, quad))	// TODO: perhaps, pass a file name as a window title
 		{
