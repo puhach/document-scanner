@@ -44,14 +44,48 @@ std::vector<cv::Point> AbstractQuadDetector::detect(const cv::Mat& image) const
 class AbstractPaperSheetDetector : public AbstractQuadDetector
 {
 public:
+protected:
+	// Approximate the contours and remove inappropriate ones
+	virtual std::vector<std::vector<cv::Point>> refineContours(const std::vector<std::vector<cv::Point>>& contours, const cv::Mat &image) const;
+
 private:
 	virtual std::vector<cv::Point> selectBestCandidate(const std::vector<std::vector<cv::Point>>& candidates) const override; 
 };	// AbstractPaperSheetDetector
+
+std::vector<std::vector<cv::Point>> AbstractPaperSheetDetector::refineContours(const std::vector<std::vector<cv::Point>>& contours, const cv::Mat &image) const
+{
+	const double imageArea = 1.0 * image.cols * image.rows;
+
+	std::vector<std::vector<cv::Point>> refinedContours;
+	for (const auto& contour : contours)
+	{
+		// TODO: perhaps, add a getter/setter for approximation quality
+		std::vector<cv::Point> contourApprox;
+		cv::approxPolyDP(contour, contourApprox, 0.02 * cv::arcLength(contour, true), true);
+
+		if (contourApprox.size() != 4 || !cv::isContourConvex(contourApprox))
+			continue;
+
+		double approxArea = cv::contourArea(contourApprox, false);
+
+		// TODO: perhaps, add getters and setters for min and max area factors
+		if (approxArea < 0.5*imageArea || approxArea > 0.99*imageArea)
+			continue;
+
+		refinedContours.push_back(std::move(contourApprox));
+	}	// for each contour
+
+	return refinedContours;
+}
 
 std::vector<cv::Point> AbstractPaperSheetDetector::selectBestCandidate(const std::vector<std::vector<cv::Point>>& candidates) const
 {
 	if (candidates.empty())
 		throw std::runtime_error("The list of candidates is empty.");
+
+	for (int i = 1; i < candidates.size(); ++i)
+		if (candidates[i].size() != candidates[i-1].size())
+			throw std::runtime_error("The candidates have different number of vertices.");
 
 	std::vector<double> rank(candidates.size(), 0);
 	int bestCandIdx = 0;
@@ -61,9 +95,6 @@ std::vector<cv::Point> AbstractPaperSheetDetector::selectBestCandidate(const std
 		{
 			if (i == j)
 				continue;
-
-			if (candidates[i].size() != candidates[j].size())
-				throw std::runtime_error("The candidates have different number of vertices.");
 
 			double maxDist = 0;			
 			for (int v = 0; v < candidates[i].size(); ++v)
@@ -147,7 +178,11 @@ std::vector<std::vector<cv::Point>> IthreshPaperSheetDetector::detectCandidates(
 			std::vector<std::vector<cv::Point>> contours;	// TODO: perhaps, make it local to reduce memory allocations
 			cv::findContours(channelBin, contours, cv::RETR_EXTERNAL, cv::CHAIN_APPROX_SIMPLE);
 
-			for (auto& contour : contours)
+			auto&& refinedContours = refineContours(contours, channelBin);
+			std::move(refinedContours.begin(), refinedContours.end(), std::back_inserter(candidates));
+
+			/*
+			for (const auto& contour : contours)
 			{
 				// TODO: perhaps, add a getter/setter for approximation quality
 				std::vector<cv::Point> contourApprox;
@@ -162,8 +197,9 @@ std::vector<std::vector<cv::Point>> IthreshPaperSheetDetector::detectCandidates(
 				if (approxArea < 0.5 * channel.rows * channel.cols || approxArea > 0.99 * channel.rows * channel.cols)
 					continue;
 
-				candidates.push_back(contourApprox);
+				candidates.push_back(std::move(contourApprox));
 			}	// for each contour
+			*/
 		}	// threshLevel
 	}	// for i channel
 
@@ -171,10 +207,105 @@ std::vector<std::vector<cv::Point>> IthreshPaperSheetDetector::detectCandidates(
 		candidates.push_back(std::vector<cv::Point>{ {0, 0}, { 0, src.rows - 1 }, { src.rows - 1, src.cols - 1 }, { 0, src.cols - 1 } });
 
 	return candidates;
-}	// detect
+}	// detectCandidates
 
+// A paper sheet detector based on a dominant saturation-value pair
+class SavaldoPaperSheetDetector : public AbstractPaperSheetDetector
+{
+public:
+private:
+	virtual std::vector<std::vector<cv::Point>> detectCandidates(const cv::Mat& image) const override;
+	virtual std::vector<cv::Point> selectBestCandidate(const std::vector<std::vector<cv::Point>>& candidates) const override;
+};	// SavaldoPaperSheetDetector
 
+std::vector<std::vector<cv::Point>> SavaldoPaperSheetDetector::detectCandidates(const cv::Mat& src) const
+{
+	CV_Assert(src.depth() == CV_8U);
 
+	cv::Mat srcHSV;
+	cv::cvtColor(src, srcHSV, cv::COLOR_BGR2HSV);
+
+	//cv::Mat1b srcChannelsHSV[3];
+	std::vector<cv::Mat1b> srcChannelsHSV;
+	cv::split(srcHSV, srcChannelsHSV);
+
+	cv::imshow("test", srcChannelsHSV[0]);
+	cv::waitKey();
+	cv::imshow("test", srcChannelsHSV[1]);
+	cv::waitKey();
+	cv::imshow("test", srcChannelsHSV[2]);
+	cv::waitKey();
+
+	// Compute the 2D histogram of saturation-value pairs
+	cv::Mat1f histSV;
+	cv::calcHist(srcChannelsHSV, std::vector{ 1, 2 }, cv::Mat(), histSV, std::vector{ 256, 256 }, std::vector{ 0.0f, 256.0f, 0.0f, 256.0f });
+	//cv::calcHist(std::vector{ srcChannelsHSV }, std::vector{ 0, 2 }, cv::Mat(), histSV, std::vector{ 180, 256 }, std::vector{ 0.0f, 180.0f, 0.0f, 256.0f });
+
+	//cv::Mat1f histS;
+	//cv::reduce(histSV, histS, 1, cv::REDUCE_SUM);
+
+	int maxIdx[2];
+	cv::minMaxIdx(histSV, nullptr, nullptr, nullptr, maxIdx);
+	int dominantSat = maxIdx[0];
+	int dominantVal = maxIdx[1];
+
+	cv::Mat3b devMat;
+	cv::absdiff(srcHSV, cv::Scalar(0, dominantSat, dominantVal), devMat);
+	//cv::Scalar meanDev = cv::mean(devMat);
+	cv::Scalar meanDev = cv::mean(devMat);
+	//meanDev[0] = std::sqrt(meanDev[0]);
+
+	cv::Mat1b srcBin;
+	cv::inRange(srcHSV, cv::Scalar{ 0, dominantSat - meanDev[1], dominantVal - meanDev[2] }, cv::Scalar{ 179, dominantSat + meanDev[1], dominantVal + meanDev[2] }, srcBin);
+	cv::imshow("test", srcBin);
+	cv::waitKey();
+
+	std::vector<std::vector<cv::Point>> contours;
+	std::vector<cv::Vec4i> hierarchy;
+	cv::findContours(srcBin, contours, hierarchy, cv::RETR_EXTERNAL, cv::CHAIN_APPROX_SIMPLE);
+
+	
+	auto it = std::max_element(contours.begin(), contours.end(), [](const auto& c1, const auto& c2) { return cv::contourArea(c1) < cv::contourArea(c2); });
+	int contourIndex = it - contours.begin();
+	cv::Mat srcCopy = src.clone();
+	cv::drawContours(srcCopy, contours, contourIndex, cv::Scalar(0, 255, 0), 4);
+	cv::imshow("test", srcCopy);
+	cv::waitKey();
+
+	std::vector<std::vector<cv::Point>> candidates = refineContours(contours, src);
+	/*for (const auto &contour : contours)
+	{
+		std::vector<cv::Point> contourApprox;
+		cv::approxPolyDP(contour, contourApprox, 0.02*cv::arcLength(contour, true), true);
+
+		if (contourApprox.size() != 4 || !cv::isContourConvex(contourApprox))
+			continue;
+
+		candidates.push_back(std::move(contourApprox));
+	}	// contours
+	*/
+
+	srcCopy = src.clone();
+	cv::drawContours(srcCopy, candidates, -1, cv::Scalar(0, 255, 0), 4, cv::LINE_AA);
+	cv::imshow("test", srcCopy);
+	cv::waitKey();
+
+	if (candidates.empty())
+		candidates.push_back(std::vector<cv::Point>{ {0, 0}, { 0, src.rows - 1 }, { src.rows - 1, src.cols - 1 }, { 0, src.cols - 1 } });
+
+	return candidates;
+}	// detectCandiates
+
+std::vector<cv::Point> SavaldoPaperSheetDetector::selectBestCandidate(const std::vector<std::vector<cv::Point>>& candidates) const
+{
+	CV_Assert(!candidates.empty());
+
+	auto it = std::max_element(candidates.begin(), candidates.end(), [](const auto& c1, const auto& c2) { 
+			return cv::contourArea(c1) < cv::contourArea(c2); 
+		});
+
+	return *it;
+}
 
 
 class DocumentScanner
@@ -186,6 +317,8 @@ public:
 
 	const cv::String& getWindowName() const noexcept { return this->windowName; }
 	void setWindowName(const cv::String& windowName) { this->windowName = windowName; }
+
+	void setDetector(std::unique_ptr<AbstractQuadDetector> detector) { this->paperDetector = std::move(detector); }
 
 	cv::Mat rectify1(const cv::Mat& src);	// TODO: consider making it const
 	cv::Mat rectify2(const cv::Mat& src);
@@ -1194,13 +1327,13 @@ int main(int argc, char* argv[])
 {
 	try
 	{
-		cv::Mat imSrc = cv::imread("./images/scanned-form.jpg", cv::IMREAD_COLOR);	// TODO: not sure what reading mode should be used
-		//cv::Mat imSrc = cv::imread("./images/mozart1.jpg", cv::IMREAD_COLOR);	// EXIF is important
-		//cv::Mat imSrc = cv::imread("./images/sens2.jpg", cv::IMREAD_COLOR);	// EXIF is important
+		//cv::Mat imSrc = cv::imread("./images/scanned-form.jpg", cv::IMREAD_COLOR);	// TODO: not sure what reading mode should be used
+		//cv::Mat imSrc = cv::imread("./images/mozart2.jpg", cv::IMREAD_COLOR);	// EXIF is important
+		cv::Mat imSrc = cv::imread("./images/sens3.jpg", cv::IMREAD_COLOR);	// EXIF is important
 
 		DocumentScanner scanner;
 		scanner.setWindowName("my");
-		//scanner.rectify(imSrc);		
+		scanner.setDetector(std::make_unique<SavaldoPaperSheetDetector>());		// TEST!
 		std::vector<cv::Point> quad;
 		if (scanner.prepare(imSrc, quad))	// TODO: perhaps, pass a file name as a window title
 		{
