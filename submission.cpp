@@ -448,12 +448,17 @@ std::vector<cv::Point2f> DocumentScanner::arrangeVerticesClockwise(const std::ve
 				return acc;
 		});
 
+	//const cv::Point& p0 = *accTopLeft.second;
+	//
+	//cv::Point u0 = -p0;	// the vector from p0 to (0,0)
+	//if (u0.x == 0 && u0.y == 0)	// in case p0 is in the top-left corner, u0 may point anywhere outside the image rectangle
+	//	u0.x = u0.y = -1;
 
-	// Compute angles between u0 = [top-left vertex, top-left corner] and the vectors from the top-left vertex to each other vertex
+	// Compute angles between u0 = [upwards from the top-left vertex] and the vectors from the top-left vertex to each other vertex
 	std::vector<double> angles(quad.size());
-	std::transform(quad.begin(), quad.end(), angles.begin(), [&p0 = *accTopLeft.second](const auto& p) {
+	std::transform(quad.begin(), quad.end(), angles.begin(), [&p0 = *accTopLeft.second, u0 = cv::Point(accTopLeft.second->x, -1)](const auto& p) {
 		cv::Point u = p - p0;	// the vector from p0 to p
-		cv::Point u0 = -p0;		// the vector from p0 to (0,0)
+		//cv::Point u0 = -p0;		// the vector from p0 to (0,0)
 
 		// Compute the dot product of u0 and u: u0.x*u.x+u0.y*u.y = |u0|*|u|*cos(angle)
 		int dp = u0.x * u.x + u0.y * u.y;
@@ -464,7 +469,7 @@ std::vector<cv::Point2f> DocumentScanner::arrangeVerticesClockwise(const std::ve
 		// cp/dp = sin(angle)/cos(angle) = tan(angle)
 		// Domain error may occur if cp and dp are both zero:
 		// https://en.cppreference.com/w/cpp/numeric/math/atan2
-		double angle = cp && dp ? std::atan2(cp, dp) : 0;
+		double angle = cp || dp ? std::atan2(cp, dp) : 0;
 
 		if (angle < 0)	// atan2 returns values from [-pi, +pi]
 		{
