@@ -34,6 +34,7 @@ protected:
 	AbstractQuadDetector() = default;
 	
 	// Restrict copy/move operations since this is a polymorphic type
+
 	AbstractQuadDetector(const AbstractQuadDetector&) = default;
 	AbstractQuadDetector(AbstractQuadDetector&&) = default;
 
@@ -210,7 +211,7 @@ std::vector<cv::Point> AbstractPaperSheetDetector::selectBestCandidate(const std
 class IthreshPaperSheetDetector : public AbstractPaperSheetDetector
 {
 public:
-	constexpr IthreshPaperSheetDetector(int thresholdLevels = 7)
+	constexpr IthreshPaperSheetDetector(int thresholdLevels = 5)
 		: thresholdLevels(thresholdLevels>=1 && thresholdLevels<=255 ? thresholdLevels : throw std::invalid_argument("The number of threshold levels must be in range 1..255."))
 	{
 	}
@@ -251,7 +252,8 @@ std::unique_ptr<AbstractQuadDetector> IthreshPaperSheetDetector::createClone() c
 std::vector<std::vector<cv::Point>> IthreshPaperSheetDetector::detectCandidates(const cv::Mat& src) const
 {
 	CV_Assert(src.depth() == CV_8U);
-	// TODO: can a grayscale image be converted to HSV?
+	CV_Assert(src.channels() >= 3);		// a grayscale image can't be converted to HSV
+
 	cv::Mat srcHSV;
 	cv::cvtColor(src, srcHSV, cv::COLOR_BGR2HSV);
 
@@ -303,7 +305,7 @@ std::vector<std::vector<cv::Point>> IthreshPaperSheetDetector::detectCandidates(
 class SavaldoPaperSheetDetector : public AbstractPaperSheetDetector
 {
 public:
-	SavaldoPaperSheetDetector() = default;	// TODO: do we need any parameters
+	SavaldoPaperSheetDetector() = default;	
 
 protected:
 	
@@ -332,6 +334,7 @@ std::unique_ptr<AbstractQuadDetector> SavaldoPaperSheetDetector::createClone() c
 std::vector<std::vector<cv::Point>> SavaldoPaperSheetDetector::detectCandidates(const cv::Mat& src) const
 {
 	CV_Assert(src.depth() == CV_8U);
+	CV_Assert(src.channels() >= 3);		// a grayscale image can't be converted to HSV
 
 	cv::Mat srcHSV;
 	cv::cvtColor(src, srcHSV, cv::COLOR_BGR2HSV);
@@ -400,9 +403,12 @@ public:
 	const cv::String& getWindowName() const noexcept { return this->windowName; }
 	void setWindowName(const cv::String& windowName) { this->windowName = windowName; }
 
+	bool isViewInvariant() const noexcept { return this->viewInvariant; }
+	void setViewInvariantMode(bool viewInvariant) noexcept { this->viewInvariant = viewInvariant; }
+
 	void setDetector(std::unique_ptr<AbstractPaperSheetDetector> detector) { this->paperDetector = std::move(detector); }
 
-	cv::Mat rectify(const cv::Mat& src, std::vector<cv::Point> &quad, int width, int height, bool canonicalView = true);
+	cv::Mat rectify(const cv::Mat& src, std::vector<cv::Point> &quad, int width, int height);
 
 	bool prepare(const cv::Mat& src, std::vector<cv::Point> &quad);
 
@@ -422,6 +428,7 @@ private:
 	std::unique_ptr<AbstractPaperSheetDetector> paperDetector = std::make_unique<IthreshPaperSheetDetector>();
 	cv::Mat src, srcDecorated;
 	cv::String windowName;
+	bool viewInvariant = true;
 	std::vector<cv::Point> bestQuad;
 	cv::Point* ptDragged = nullptr;		// raw pointers are fine if the pointer is non-owning	
 };	// DocumentScanner
@@ -500,7 +507,7 @@ bool DocumentScanner::prepare(const cv::Mat& src, std::vector<cv::Point>& quad)
 	return (key & 0xFF) != 27;	// not escape
 }	// prepare
 
-cv::Mat DocumentScanner::rectify(const cv::Mat& src, std::vector<cv::Point>& quad, int width, int height, bool canonicalView)
+cv::Mat DocumentScanner::rectify(const cv::Mat& src, std::vector<cv::Point>& quad, int width, int height)
 {
 	CV_Assert(!src.empty());
 	CV_Assert(quad.size() == 4);
@@ -510,11 +517,11 @@ cv::Mat DocumentScanner::rectify(const cv::Mat& src, std::vector<cv::Point>& qua
 	// In order to perform perspective correction, the source and destination points must be consistently ordered (clockwise order is used)
 	std::vector<cv::Point2f> srcQuadF = arrangeVerticesClockwise(quad);
 
-	// In a canonical view mode the width denotes a measure of the horizontal dimension of a correctly aligned document as seen 
-	// in a frontal view, i.e. it doesn't depend on how the document is actually positioned in the input image. 
-	// Otherwise, the width corresponds to the dimension which is closer to horizontal in the input image.
+	// In a view-invariant mode the width refers to the horizontal dimension of a correctly aligned document as seen in
+	// a frontal view, i.e. it doesn't depend on how the document is actually positioned in the input image. Otherwise, 
+	// the width measures the dimension which is closer to horizontal in the input image. The same applies to the height.
 	bool rotateImage = false;
-	if (canonicalView)
+	if (this->viewInvariant)
 	{
 		// Estimate width and height of the document from the source image
 		double wSrc = cv::norm(srcQuadF[0] - srcQuadF[1]), hSrc = cv::norm(srcQuadF[0] - srcQuadF[3]);
@@ -716,21 +723,25 @@ int main(int argc, char* argv[])
 {
 	try
 	{
-		//cv::Mat imSrc = cv::imread("./images/scanned-form.jpg", cv::IMREAD_COLOR);	// TODO: not sure what reading mode should be used
-		cv::Mat imSrc = cv::imread("./images/mozart2.jpg", cv::IMREAD_COLOR);	// EXIF is important
+		cv::Mat imSrc = cv::imread("./images/scanned-form.jpg", cv::IMREAD_COLOR);	// TODO: not sure what reading mode should be used
+		//cv::Mat imSrc = cv::imread("./images/mozart2.jpg", cv::IMREAD_COLOR);	// EXIF is important
 		//cv::Mat imSrc = cv::imread("./images/sens2.jpg", cv::IMREAD_COLOR);	// EXIF is important
 
 		DocumentScanner scanner;	
 		scanner.setWindowName("my");	// TODO: perhaps, pass a file name as a window title
 		
 		auto det = std::make_unique<IthreshPaperSheetDetector>();
-		det->setThresholdLevels(1);
+		det->setThresholdLevels(5);
 		scanner.setDetector(std::move(det));
+		//scanner.setDetector(std::make_unique<SavaldoPaperSheetDetector>());
+
+		scanner.setViewInvariantMode(false);	// TEST!
 
 		std::vector<cv::Point> quad;
 		if (scanner.prepare(imSrc, quad))
 		{
 			cv::Mat out = scanner.rectify(imSrc, quad, 500, 707);
+			//cv::Mat out = scanner.rectify(imSrc, quad, 707, 500);
 			scanner.display(out);
 		}
 
