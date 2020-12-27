@@ -24,8 +24,7 @@ class AbstractQuadDetector
 {
 public:
 	virtual ~AbstractQuadDetector() = default;
-	// TODO: define copy/move semantics
-
+	
 	std::vector<cv::Point> detect(const cv::Mat& image) const;
 
 	std::unique_ptr<AbstractQuadDetector> clone() const { return createClone(); }	// NVI idiom
@@ -240,7 +239,7 @@ private:
 
 	virtual std::vector<std::vector<cv::Point>> detectCandidates(const cv::Mat& image) const override;
 
-	int thresholdLevels;
+	int thresholdLevels;    
 };	// IthreshPaperSheetDetector
 
 
@@ -279,6 +278,7 @@ std::vector<std::vector<cv::Point>> IthreshPaperSheetDetector::detectCandidates(
 			cv::threshold(channel, channelBin, threshLevel * 255.0 / (this->thresholdLevels + 1.0), 255,
 				i == 1 ? cv::THRESH_BINARY_INV : cv::THRESH_BINARY);	// for a value channel use another threshold
 
+            // Remove small dark regions (holes) in the paper sheet
 			//cv::dilate(channelBin, channelBin, cv::getStructuringElement(cv::MORPH_ELLIPSE, cv::Size(5, 5)));
 			cv::morphologyEx(channelBin, channelBin, cv::MORPH_CLOSE, cv::getStructuringElement(cv::MORPH_ELLIPSE, cv::Size(5, 5)));
 
@@ -287,9 +287,9 @@ std::vector<std::vector<cv::Point>> IthreshPaperSheetDetector::detectCandidates(
 			if (minVal > 254 || maxVal < 1)	// all black or all white
 				continue;
 
-			std::vector<std::vector<cv::Point>> contours;	// TODO: perhaps, make it local to reduce memory allocations
+			std::vector<std::vector<cv::Point>> contours;    
 			cv::findContours(channelBin, contours, cv::RETR_EXTERNAL, cv::CHAIN_APPROX_SIMPLE);
-
+            
 			auto&& refinedContours = refineContours(contours, channelBin);
 			std::move(refinedContours.begin(), refinedContours.end(), std::back_inserter(candidates));
 		}	// threshLevel
@@ -320,7 +320,7 @@ protected:
 
 private:
 
-	virtual std::unique_ptr<AbstractQuadDetector> createClone() const;
+	virtual std::unique_ptr<AbstractQuadDetector> createClone() const override;
 
 	virtual std::vector<std::vector<cv::Point>> detectCandidates(const cv::Mat& image) const override;
 	//virtual std::vector<cv::Point> selectBestCandidate(const std::vector<std::vector<cv::Point>>& candidates) const override;
@@ -384,6 +384,12 @@ std::vector<std::vector<cv::Point>> SavaldoPaperSheetDetector::detectCandidates(
 //	return *it;
 //}	// selectBestCandidate
 
+
+/****************************************************************************************************************************************
+ * 
+ * A document scanner class takes in an image of a document and performs perspective correction
+ * 
+ * **************************************************************************************************************************************/
 
 class DocumentScanner
 {
@@ -709,25 +715,25 @@ int main(int argc, char* argv[])
 {
 	try
 	{
-		cv::Mat imSrc = cv::imread("./images/scanned-form.jpg", cv::IMREAD_COLOR);	// TODO: not sure what reading mode should be used
-		//cv::Mat imSrc = cv::imread("./images/mozart2.jpg", cv::IMREAD_COLOR);	// EXIF is important
-		//cv::Mat imSrc = cv::imread("./images/sens2.jpg", cv::IMREAD_COLOR);	// EXIF is important
+		//cv::Mat imSrc = cv::imread("./images/scanned-form.jpg", cv::IMREAD_COLOR);	
+		cv::Mat imSrc = cv::imread("./images/mozart2.jpg", cv::IMREAD_COLOR);	// EXIF is important
+		//cv::Mat imSrc = cv::imread("./images/sens3.jpg", cv::IMREAD_COLOR);	// EXIF is important
 
 		DocumentScanner scanner("my");	
 		//scanner.setWindowName("my");	// TODO: perhaps, pass a file name as a window title
 		
-		auto det = std::make_unique<IthreshPaperSheetDetector>();
+		/*auto det = std::make_unique<IthreshPaperSheetDetector>();
 		det->setThresholdLevels(5);
-		scanner.setDetector(std::move(det));
-		//scanner.setDetector(std::make_unique<SavaldoPaperSheetDetector>());
+		scanner.setDetector(std::move(det));*/
+		scanner.setDetector(std::make_unique<SavaldoPaperSheetDetector>());
 
-		scanner.setViewInvariantMode(false);	// TEST!
+		//scanner.setViewInvariantMode(false);	
 
 		std::vector<cv::Point> quad;
 		if (scanner.prepare(imSrc, quad))
-		{
+		{                       
 			cv::Mat out = scanner.rectify(imSrc, quad, 500, 707);
-			//cv::Mat out = scanner.rectify(imSrc, quad, 707, 500);
+			///cv::Mat out = scanner.rectify(imSrc, quad, 707, 500);
 			scanner.display(out);
 		}
 
