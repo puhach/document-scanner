@@ -210,7 +210,7 @@ std::vector<cv::Point> AbstractPaperSheetDetector::selectBestCandidate(const std
 class IthreshPaperSheetDetector : public AbstractPaperSheetDetector
 {
 public:
-	constexpr IthreshPaperSheetDetector(int thresholdLevels = 5)
+	constexpr IthreshPaperSheetDetector(int thresholdLevels = 15)
 		: thresholdLevels(thresholdLevels>=1 && thresholdLevels<=255 ? thresholdLevels : throw std::invalid_argument("The number of threshold levels must be in range 1..255."))
 	{
 	}
@@ -250,6 +250,7 @@ std::unique_ptr<AbstractQuadDetector> IthreshPaperSheetDetector::createClone() c
 
 std::vector<std::vector<cv::Point>> IthreshPaperSheetDetector::detectCandidates(const cv::Mat& src) const
 {
+    CV_Assert(!src.empty());
 	CV_Assert(src.depth() == CV_8U);
 	CV_Assert(src.channels() >= 3);		// a grayscale image can't be converted to HSV
 
@@ -334,6 +335,7 @@ std::unique_ptr<AbstractQuadDetector> SavaldoPaperSheetDetector::createClone() c
 
 std::vector<std::vector<cv::Point>> SavaldoPaperSheetDetector::detectCandidates(const cv::Mat& src) const
 {
+    CV_Assert(!src.empty());
 	CV_Assert(src.depth() == CV_8U);
 	CV_Assert(src.channels() >= 3);		// a grayscale image can't be converted to HSV
 
@@ -727,7 +729,7 @@ int main(int argc, char* argv[])
             "{height                |0                    | The rectified document's height (if zero, it is deduced from the width and the aspect ratio) }"
             "{aspect_ratio          |0.7071               | The rectified document's aspect ratio (unused if both width and height are specified) }"
 			"{paper_detector        |1                    | The algorithm to be used for paper sheet detection (1 - Ithresh, 2 - Savaldo) }"
-			"{threshold_levels      |5                    | The number of threshold levels for the Ithresh paper sheet detector }"
+			"{threshold_levels      |15                   | The number of threshold levels for the Ithresh paper sheet detector }"
 			"{min_area_pct          |0.5                  | The minimal fraction of the original image that the paper sheet must occupy to be considered for detection (0..max_area_pct) }"
 			"{max_area_pct          |0.99                 | The maximal fraction of the original image that the paper sheet can occupy to be considered for detection (min_area_pct..1) }"
 			"{approx_accuracy_pct   |0.02                 | The accuracy of contour approximation with respect to the contour length (0..1) }";
@@ -764,8 +766,10 @@ int main(int argc, char* argv[])
         // Load the input image
         
 		cv::Mat imgInput = cv::imread(inputFile, cv::IMREAD_COLOR);	// EXIF is important 
-		
+		if (imgInput.empty())
+            throw std::runtime_error("Failed to load the input image from \"" + inputFile + "\". Make sure this file exists.");
 
+        
 		// Deduce the width and height from the aspect ratio
 		
 		if (width == 0)
