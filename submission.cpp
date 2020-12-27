@@ -278,10 +278,10 @@ std::vector<std::vector<cv::Point>> IthreshPaperSheetDetector::detectCandidates(
 			cv::threshold(channel, channelBin, threshLevel * 255.0 / (this->thresholdLevels + 1.0), 255,
 				i == 1 ? cv::THRESH_BINARY_INV : cv::THRESH_BINARY);	// for a value channel use another threshold
 
-            // Remove small dark regions (holes) in the paper sheet
-			//cv::dilate(channelBin, channelBin, cv::getStructuringElement(cv::MORPH_ELLIPSE, cv::Size(5, 5)));
+            // Remove small dark regions (holes) in the paper sheet			
 			cv::morphologyEx(channelBin, channelBin, cv::MORPH_CLOSE, cv::getStructuringElement(cv::MORPH_ELLIPSE, cv::Size(5, 5)));
-
+            //cv::dilate(channelBin, channelBin, cv::getStructuringElement(cv::MORPH_ELLIPSE, cv::Size(5, 5)));
+            
 			double minVal, maxVal;
 			cv::minMaxLoc(channelBin, &minVal, &maxVal);
 			if (minVal > 254 || maxVal < 1)	// all black or all white
@@ -323,7 +323,7 @@ private:
 	virtual std::unique_ptr<AbstractQuadDetector> createClone() const override;
 
 	virtual std::vector<std::vector<cv::Point>> detectCandidates(const cv::Mat& image) const override;
-	//virtual std::vector<cv::Point> selectBestCandidate(const std::vector<std::vector<cv::Point>>& candidates) const override;
+    
 };	// SavaldoPaperSheetDetector
 
 
@@ -372,17 +372,6 @@ std::vector<std::vector<cv::Point>> SavaldoPaperSheetDetector::detectCandidates(
 
 	return candidates;
 }	// detectCandiates
-
-//std::vector<cv::Point> SavaldoPaperSheetDetector::selectBestCandidate(const std::vector<std::vector<cv::Point>>& candidates) const
-//{
-//	CV_Assert(!candidates.empty());
-//
-//	auto it = std::max_element(candidates.begin(), candidates.end(), [](const auto& c1, const auto& c2) { 
-//			return cv::contourArea(c1) < cv::contourArea(c2); 
-//		});
-//
-//	return *it;
-//}	// selectBestCandidate
 
 
 /****************************************************************************************************************************************
@@ -449,12 +438,15 @@ DocumentScanner::DocumentScanner(const std::string& windowName, std::unique_ptr<
 
 bool DocumentScanner::prepare(const cv::Mat& src, std::vector<cv::Point>& quad)
 {	
-	this->src = src;
-	this->ptDragged = nullptr;
+	this->src = src;   // the source image is used by the mouse handler
+	this->ptDragged = nullptr;     // reset the selected point
 
 	// Detect the paper sheet boundaries
 	this->bestQuad = this->paperDetector->detect(src);
 
+    // It would generally be better to use RAII to guarantee that mouse handling gets disabled even if an exception is raised, 
+    // but since the only function (except this one) where a user can click the window is display, it is easier just to disable 
+    // mouse handling there.
 	//struct WindowRAII
 	//{
 	//	WindowRAII(const std::string &windowName, DocumentScanner *scanner)
@@ -485,16 +477,11 @@ bool DocumentScanner::prepare(const cv::Mat& src, std::vector<cv::Point>& quad)
 	{
 		cv::imshow(this->windowName, this->srcDecorated);
 		key = cv::waitKey(10);
-
-		// TEST!
-		if ((key & 0xFF) == 101)
-			throw std::runtime_error("My test exception");
 	} while (key < 0);
 
-	cv::setMouseCallback(this->windowName, nullptr);	// disable mouse handling
-
-	// A user might have moved the points
-	quad = this->bestQuad;
+	cv::setMouseCallback(this->windowName, nullptr);	// disable mouse handling to prevent unwanted attempts to move the vertices 
+	
+	quad = this->bestQuad;     // a user might have moved the points
 
 	return (key & 0xFF) != 27;	// not escape
 }	// prepare
@@ -503,6 +490,7 @@ cv::Mat DocumentScanner::rectify(const cv::Mat& src, std::vector<cv::Point>& qua
 {
 	CV_Assert(!src.empty());
 	CV_Assert(quad.size() == 4);
+    CV_Assert(width > 0 && height > 0);
 
 	cv::namedWindow(this->windowName, cv::WINDOW_AUTOSIZE);
 
@@ -605,7 +593,7 @@ bool DocumentScanner::display(const cv::Mat& image)
 	cv::setMouseCallback(this->windowName, nullptr);	// make sure that mouse handling is disabled
 	cv::imshow(this->windowName, image);
 	return (cv::waitKey() & 0xFF) != 27;
-}
+}   // display
 
 void DocumentScanner::onMouseEvent(int event, int x, int y, int flags, void* userData)
 {
@@ -709,32 +697,121 @@ void DocumentScanner::drawSelection()
 }	// drawSelection
 
 
+void printUsage()
+{    
+	std::cout << "Usage: doscan [-h]"
+				 " --input=<input image file>" 
+				 " [--output=<output file>]"
+				 " [--view_invariant=<true or false>]"
+				 " [--width=<a positive integer or zero>]"
+                 " [--height=<a positive integer or zero>]"
+                 " [--aspect_ratio=<a positive float>]"
+				 " [--paper_detector=<1 - Ithresh, 2 - Savaldo>]"
+				 " [--threshold_levels=<integer (1..255)>]"
+				 " [--min_area_pct=<float (0..max_area_pct)>]"
+				 " [--max_area_pct=<float (min_area_pct..1)>]"
+				 " [--approx_accuracy_pct=<float (0..1)>]" << std::endl;
+}
 
 
 int main(int argc, char* argv[])
 {
 	try
 	{
-		//cv::Mat imSrc = cv::imread("./images/scanned-form.jpg", cv::IMREAD_COLOR);	
-		cv::Mat imSrc = cv::imread("./images/mozart2.jpg", cv::IMREAD_COLOR);	// EXIF is important
-		//cv::Mat imSrc = cv::imread("./images/sens3.jpg", cv::IMREAD_COLOR);	// EXIF is important
-
-		DocumentScanner scanner("my");	
-		//scanner.setWindowName("my");	// TODO: perhaps, pass a file name as a window title
+        static const cv::String keys =
+			"{help h usage ?        |                     | Print the help message  }"
+			"{input                 |<none>               | The file path of the image to be rectified }"
+			"{output                |                     | If not empty, specifies the output file path where the rectified image will be saved to }"
+			"{view_invariant        |true                 | Determines whether the document's aspect ratio should be treated as view-invariant }"
+            "{width                 |500                  | The rectified document's width (if zero, it is deduced from the height and the aspect ratio) }"
+            "{height                |0                    | The rectified document's height (if zero, it is deduced from the width and the aspect ratio) }"
+            "{aspect_ratio          |0.7071               | The rectified document's aspect ratio (unused if both width and height are specified) }"
+			"{paper_detector        |1                    | The algorithm to be used for paper sheet detection (1 - Ithresh, 2 - Savaldo) }"
+			"{threshold_levels      |5                    | The number of threshold levels for the Ithresh paper sheet detector }"
+			"{min_area_pct          |0.5                  | The minimal fraction of the original image that the paper sheet must occupy to be considered for detection (0..max_area_pct) }"
+			"{max_area_pct          |0.99                 | The maximal fraction of the original image that the paper sheet can occupy to be considered for detection (min_area_pct..1) }"
+			"{approx_accuracy_pct   |0.02                 | The accuracy of contour approximation with respect to the contour length (0..1) }";
 		
-		/*auto det = std::make_unique<IthreshPaperSheetDetector>();
-		det->setThresholdLevels(5);
-		scanner.setDetector(std::move(det));*/
-		scanner.setDetector(std::make_unique<SavaldoPaperSheetDetector>());
+		cv::CommandLineParser parser(argc, argv, keys);
+		parser.about("Document Scanner\n(c) Yaroslav Pugach");
 
-		//scanner.setViewInvariantMode(false);	
+		if (parser.has("help"))
+		{
+			printUsage();
+			return 0;
+		}
 
+		std::string inputFile = parser.get<std::string>("input");
+		std::string outputFile = parser.get<std::string>("output");
+		bool viewInvariant = parser.get<bool>("view_invariant");
+        int width = parser.get<int>("width");
+        int height = parser.get<int>("height");
+        double aspectRatio = parser.get<double>("aspect_ratio");
+        int paperDetectorIdx = parser.get<int>("paper_detector");
+        int thresholdLevels = parser.get<int>("threshold_levels");
+        double minAreaPct = parser.get<double>("min_area_pct");
+        double maxAreaPct = parser.get<double>("max_area_pct");
+        double approxAccuracyPct = parser.get<double>("approx_accuracy_pct");
+        		
+		if (!parser.check())
+		{
+			parser.printErrors();
+			printUsage();
+			return -1;
+		}
+
+		
+        // Load the input image
+        
+		cv::Mat imgInput = cv::imread(inputFile, cv::IMREAD_COLOR);	// EXIF is important 
+		
+
+		// Deduce the width and height from the aspect ratio
+		
+		if (width == 0)
+        {
+            width = static_cast<int>(height * aspectRatio);            
+        }
+        
+        if (height == 0 && aspectRatio > 0)
+        {
+            height = static_cast<int>(width / aspectRatio);            
+        }
+        
+        
+        // Create a paper sheet detector
+        
+        std::unique_ptr<AbstractPaperSheetDetector> paperSheetDetector;
+        switch (paperDetectorIdx)
+        {
+            case 1:
+                paperSheetDetector = std::make_unique<IthreshPaperSheetDetector>(thresholdLevels);
+                break;
+            case 2:
+                paperSheetDetector = std::make_unique<SavaldoPaperSheetDetector>();
+                break;
+            default:
+                throw std::invalid_argument("Incorrect paper detection algorithm specified. Supported options: 1 - Ithresh, 2 - Savaldo.");
+        }   // switch
+        
+        paperSheetDetector->setAreaPctRange(minAreaPct, maxAreaPct);
+        paperSheetDetector->setApproximationAccuracyPct(approxAccuracyPct);
+        
+        
+        // Set up the document scanner 
+        
+		DocumentScanner scanner(inputFile, std::move(paperSheetDetector));	
+		scanner.setViewInvariantMode(viewInvariant);
+        
 		std::vector<cv::Point> quad;
-		if (scanner.prepare(imSrc, quad))
+		if (scanner.prepare(imgInput, quad))
 		{                       
-			cv::Mat out = scanner.rectify(imSrc, quad, 500, 707);
-			///cv::Mat out = scanner.rectify(imSrc, quad, 707, 500);
-			scanner.display(out);
+            cv::Mat imgOutput = scanner.rectify(imgInput, quad, width, height);
+			
+            if (!outputFile.empty())
+                cv::imwrite(outputFile, imgOutput);
+            
+			scanner.display(imgOutput);            
 		}
 
 		return 0;
