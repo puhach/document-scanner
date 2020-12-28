@@ -537,22 +537,46 @@ cv::Mat DocumentScanner::rectify(const cv::Mat& src, std::vector<cv::Point>& qua
 
 std::vector<cv::Point2f> DocumentScanner::arrangeVerticesClockwise(const std::vector<cv::Point>& quad)
 {
-	CV_Assert(!quad.empty());
+	CV_Assert(quad.size() == 4);
 
-	// Find the top-left vertex, i.e. the closest vertex to the (0,0) corner. In case there are several vertices equidistant to 
-	// the top-left corner, pick the one which is the leftmost. This tie-breaker is important in the view-dependent mode, where
-	// we define the width as a measure of the side which connects the top-left and top-right vertices of the warped document in 
-	// the image. Thus, we must always be certain about which vertex is the top-left one. 
-	auto accTopLeft = std::accumulate(quad.begin(), quad.end(),
-		std::pair<long long, const cv::Point*>(std::numeric_limits<long long>::max(), nullptr),
-		[&quad](const auto& acc, const auto& p) {
-			if (long long d = 1LL*p.x*p.x + 1LL*p.y*p.y; d < acc.first || d == acc.first && p.x < acc.second->x)	// squared distance to (0,0)
-				return std::make_pair(d, &p);
-			else
-				return acc;
+	// Find the quad boundaries 
+	auto xbounds = std::minmax_element(quad.begin(), quad.end(), [](const auto& p1, const auto& p2) {
+			return p1.x < p2.x;
 		});
 
-	CV_Assert(accTopLeft.second != nullptr);
+	auto ybounds = std::minmax_element(quad.begin(), quad.end(), [](const auto& p1, const auto& p2) {
+			return p1.y < p2.y;
+		});
+
+
+	/*int minx = std::numeric_limits<int>::max(), maxx = 0;
+	int miny = std::numeric_limits<int>::max(), maxy = 0;
+	for (const auto& p : quad)
+	{
+		minx = std::min(minx, p.x);
+		maxx = std::max(maxx, p.x);
+		std::minmax()
+	}*/
+
+	//// Find the topmost vertex
+	//auto topmostIt = std::min_element(quad.begin(), quad.end(), [](const auto& p1, const auto& p2) {
+	//		return p1.y < p2.y;
+	//	});
+	
+	//// Find the top-left vertex, i.e. the closest vertex to the (0,0) corner. In case there are several vertices equidistant to 
+	//// the top-left corner, pick the one which is the leftmost. This tie-breaker is important in the view-dependent mode, where
+	//// we define the width as a measure of the side which connects the top-left and top-right vertices of the warped document in 
+	//// the image. Thus, we must always be certain about which vertex is the top-left one. 
+	//auto accTopLeft = std::accumulate(quad.begin(), quad.end(),
+	//	std::pair<long long, const cv::Point*>(std::numeric_limits<long long>::max(), nullptr),
+	//	[&quad](const auto& acc, const auto& p) {
+	//		if (long long d = 1LL*p.x*p.x + 1LL*p.y*p.y; d < acc.first || d == acc.first && p.x < acc.second->x)	// squared distance to (0,0)
+	//			return std::make_pair(d, &p);
+	//		else
+	//			return acc;
+	//	});
+
+	//CV_Assert(accTopLeft.second != nullptr);
 
 	//auto accTopLeft = std::accumulate(quad.begin() + 1, quad.end(),
 	//	std::pair<double, const cv::Point*>(cv::norm(quad[0]), &quad[0]),
@@ -564,9 +588,9 @@ std::vector<cv::Point2f> DocumentScanner::arrangeVerticesClockwise(const std::ve
 	//	});
 
 
-	// Compute angles between u0 pointing upwards from the top-left vertex and the vectors from the top-left vertex to each other vertex
+	// Compute angles between u0 pointing upwards from the topmost vertex and the vectors from the topmost vertex to each other vertex
 	std::vector<double> angles(quad.size());
-	std::transform(quad.begin(), quad.end(), angles.begin(), [&p0 = *accTopLeft.second, u0 = cv::Point(0, -1)](const auto& p) {
+	std::transform(quad.begin(), quad.end(), angles.begin(), [&p0 = *ybounds.first, u0 = cv::Point(0, -1)](const auto& p) {
 		cv::Point u = p - p0;	// the vector from p0 to p
 
 		// Compute the dot product of u0 and u: u0.x*u.x+u0.y*u.y = |u0|*|u|*cos(angle)
@@ -589,19 +613,45 @@ std::vector<cv::Point2f> DocumentScanner::arrangeVerticesClockwise(const std::ve
 	});	// transform
 
 
-	// Arrange the vertices in the clockwise order starting from the top-left vertex
-
+	// Arrange the vertices in the clockwise order starting from the topmost vertex
 	std::vector<int> indices(quad.size());
 	std::iota(indices.begin(), indices.end(), 0);
 	std::sort(indices.begin(), indices.end(), [&angles](int idx1, int idx2) {
-		return angles[idx1] < angles[idx2];
+			return angles[idx1] < angles[idx2];
 		});
 
+
+	// Find the circular shift such that the top-left vertex is in the first place
+	cv::Point corners[] = { { xbounds.first->x, ybounds.first->y }, 
+							{ xbounds.second->x, ybounds.first->y },
+							{ xbounds.second->x, ybounds.second->y },
+							{ xbounds.first->x, ybounds.second->y }	};
+	int bestShift = 0;
+	long long minDist = std::numeric_limits<long long>::max();	// min total distance to the corners
+	for (int shift = 0; shift < quad.size(); ++shift)
+	{
+		// Compute the distance to the corresponding corner points
+		long long dist = 0;
+		for (int i = 0; i < quad.size(); ++i)
+		{
+			cv::Point d = quad[(indices[i]+shift)%quad.size()] - corners[i];
+			dist += 1LL * d.x * d.x + 1LL * d.y * d.y;
+		}
+
+		// We want the total distance to the corresponding corners to be minimal
+		if (dist < minDist)
+		{
+			bestShift = shift;
+			minDist = dist;
+		}
+	}	// for shift
+
+	// Fianlly, arrange the vertices according to the determined indices and the best circular shift
 	std::vector<cv::Point2f> quadF;
 	quadF.reserve(quad.size());
 	for (int idx : indices)
 	{
-		quadF.push_back(quad[idx]);
+		quadF.push_back(quad[(idx+bestShift)%quad.size()]);
 	}
 
 	return quadF;
