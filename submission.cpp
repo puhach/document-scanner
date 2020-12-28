@@ -418,7 +418,7 @@ private:
 
 	void drawSelection();
 
-	std::vector<cv::Point2f> arrangeVerticesClockwise(const std::vector<cv::Point> &quad);
+	std::vector<cv::Point2f> arrangeVertices(const std::vector<cv::Point> &quad);
 
 	constexpr static int minPointRadius = 3;
 	constexpr static int minLineWidth = 1;
@@ -497,7 +497,7 @@ cv::Mat DocumentScanner::rectify(const cv::Mat& src, std::vector<cv::Point>& qua
 	cv::namedWindow(this->windowName, cv::WINDOW_AUTOSIZE);
 
 	// In order to perform perspective correction, the source and destination points must be consistently ordered (clockwise order is used)
-	std::vector<cv::Point2f> srcQuadF = arrangeVerticesClockwise(quad);
+	std::vector<cv::Point2f> srcQuadF = arrangeVertices(quad);
 
 	// In a view-invariant mode the width refers to the horizontal dimension of a correctly aligned document as seen in
 	// a frontal view, i.e. it doesn't depend on how the document is actually positioned in the input image. Otherwise, 
@@ -535,11 +535,12 @@ cv::Mat DocumentScanner::rectify(const cv::Mat& src, std::vector<cv::Point>& qua
 	}
 }	// rectify
 
-std::vector<cv::Point2f> DocumentScanner::arrangeVerticesClockwise(const std::vector<cv::Point>& quad)
+std::vector<cv::Point2f> DocumentScanner::arrangeVertices(const std::vector<cv::Point>& quad)
 {
 	CV_Assert(quad.size() == 4);
 
 	// Find the quad boundaries 
+    
 	auto xbounds = std::minmax_element(quad.begin(), quad.end(), [](const auto& p1, const auto& p2) {
 			return p1.x < p2.x;
 		});
@@ -547,45 +548,6 @@ std::vector<cv::Point2f> DocumentScanner::arrangeVerticesClockwise(const std::ve
 	auto ybounds = std::minmax_element(quad.begin(), quad.end(), [](const auto& p1, const auto& p2) {
 			return p1.y < p2.y;
 		});
-
-
-	/*int minx = std::numeric_limits<int>::max(), maxx = 0;
-	int miny = std::numeric_limits<int>::max(), maxy = 0;
-	for (const auto& p : quad)
-	{
-		minx = std::min(minx, p.x);
-		maxx = std::max(maxx, p.x);
-		std::minmax()
-	}*/
-
-	//// Find the topmost vertex
-	//auto topmostIt = std::min_element(quad.begin(), quad.end(), [](const auto& p1, const auto& p2) {
-	//		return p1.y < p2.y;
-	//	});
-	
-	//// Find the top-left vertex, i.e. the closest vertex to the (0,0) corner. In case there are several vertices equidistant to 
-	//// the top-left corner, pick the one which is the leftmost. This tie-breaker is important in the view-dependent mode, where
-	//// we define the width as a measure of the side which connects the top-left and top-right vertices of the warped document in 
-	//// the image. Thus, we must always be certain about which vertex is the top-left one. 
-	//auto accTopLeft = std::accumulate(quad.begin(), quad.end(),
-	//	std::pair<long long, const cv::Point*>(std::numeric_limits<long long>::max(), nullptr),
-	//	[&quad](const auto& acc, const auto& p) {
-	//		if (long long d = 1LL*p.x*p.x + 1LL*p.y*p.y; d < acc.first || d == acc.first && p.x < acc.second->x)	// squared distance to (0,0)
-	//			return std::make_pair(d, &p);
-	//		else
-	//			return acc;
-	//	});
-
-	//CV_Assert(accTopLeft.second != nullptr);
-
-	//auto accTopLeft = std::accumulate(quad.begin() + 1, quad.end(),
-	//	std::pair<double, const cv::Point*>(cv::norm(quad[0]), &quad[0]),
-	//	[&quad](const auto& acc, const auto& p) {
-	//		if (double d = cv::norm(p); d < acc.first)		// distance to (0,0)
-	//			return std::make_pair(d, &p);
-	//		else
-	//			return acc;
-	//	});
 
 
 	// Compute angles between u0 pointing upwards from the topmost vertex and the vectors from the topmost vertex to each other vertex
