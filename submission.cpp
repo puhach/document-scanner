@@ -501,7 +501,8 @@ cv::Mat DocumentScanner::rectify(const cv::Mat& src, std::vector<cv::Point>& qua
 
 	// In a view-invariant mode the width refers to the horizontal dimension of a correctly aligned document as seen in
 	// a frontal view, i.e. it doesn't depend on how the document is actually positioned in the input image. Otherwise, 
-	// the width measures the dimension which is closer to horizontal in the input image. The same applies to the height.
+	// the width measures the side of the warped document which connects its top-left vertex to the top-right vertex as 
+	// it is shown in the image. The height is defined in a similar way.
 	bool rotateImage = false;
 	if (this->viewInvariant)
 	{
@@ -536,15 +537,31 @@ cv::Mat DocumentScanner::rectify(const cv::Mat& src, std::vector<cv::Point>& qua
 
 std::vector<cv::Point2f> DocumentScanner::arrangeVerticesClockwise(const std::vector<cv::Point>& quad)
 {
-	// Find the top left vertex, i.e. the closest vertex to the (0,0) corner
-	auto accTopLeft = std::accumulate(quad.begin() + 1, quad.end(),
-		std::pair<double, const cv::Point*>(cv::norm(quad[0]), &quad[0]),
+	CV_Assert(!quad.empty());
+
+	// Find the top-left vertex, i.e. the closest vertex to the (0,0) corner. In case there are several vertices equidistant to 
+	// the top-left corner, pick the one which is the leftmost. This tie-breaker is important in the view-dependent mode, where
+	// we define the width as a measure of the side which connects the top-left and top-right vertices of the warped document in 
+	// the image. Thus, we must always be certain about which vertex is the top-left one. 
+	auto accTopLeft = std::accumulate(quad.begin(), quad.end(),
+		std::pair<long long, const cv::Point*>(std::numeric_limits<long long>::max(), nullptr),
 		[&quad](const auto& acc, const auto& p) {
-			if (double d = cv::norm(p); d < acc.first)		// distance to (0,0)
+			if (long long d = 1LL*p.x*p.x + 1LL*p.y*p.y; d < acc.first || d == acc.first && p.x < acc.second->x)	// squared distance to (0,0)
 				return std::make_pair(d, &p);
 			else
 				return acc;
 		});
+
+	CV_Assert(accTopLeft.second != nullptr);
+
+	//auto accTopLeft = std::accumulate(quad.begin() + 1, quad.end(),
+	//	std::pair<double, const cv::Point*>(cv::norm(quad[0]), &quad[0]),
+	//	[&quad](const auto& acc, const auto& p) {
+	//		if (double d = cv::norm(p); d < acc.first)		// distance to (0,0)
+	//			return std::make_pair(d, &p);
+	//		else
+	//			return acc;
+	//	});
 
 
 	// Compute angles between u0 pointing upwards from the top-left vertex and the vectors from the top-left vertex to each other vertex
