@@ -579,7 +579,7 @@ std::vector<cv::Point2f> DocumentScanner::arrangeVertices(const std::vector<cv::
 	std::vector<int> indices(quad.size());
 	std::iota(indices.begin(), indices.end(), 0);
 	std::sort(indices.begin(), indices.end(), [&angles](int idx1, int idx2) {
-			return angles[idx1] < angles[idx2];
+			return angles[idx1] < angles[idx2];		// TODO: it doesn't handle the case when 3+ vertices lie on the same line
 		});
 
 
@@ -596,7 +596,7 @@ std::vector<cv::Point2f> DocumentScanner::arrangeVertices(const std::vector<cv::
 		long long dist = 0;
 		for (int i = 0; i < quad.size(); ++i)
 		{
-			cv::Point d = quad[(indices[i]+shift)%quad.size()] - corners[i];
+			cv::Point d = quad[indices[(i + shift) % quad.size()]] - corners[i];
 			dist += 1LL * d.x * d.x + 1LL * d.y * d.y;
 		}
 
@@ -611,13 +611,13 @@ std::vector<cv::Point2f> DocumentScanner::arrangeVertices(const std::vector<cv::
 	// Fianlly, arrange the vertices according to the determined indices and the best circular shift
 	std::vector<cv::Point2f> quadF;
 	quadF.reserve(quad.size());
-	for (int idx : indices)
+	for (int i = 0; i < indices.size(); ++i)
 	{
-		quadF.push_back(quad[(idx+bestShift)%quad.size()]);
+		quadF.push_back(quad[indices[(i+bestShift)%quad.size()]]);
 	}
 
 	return quadF;
-}	// arrangeVerticesClockwise
+}	// arrangeVertices
 
 bool DocumentScanner::display(const cv::Mat& image)
 {
