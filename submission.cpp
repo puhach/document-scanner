@@ -539,16 +539,6 @@ std::vector<cv::Point2f> DocumentScanner::arrangeVertices(const std::vector<cv::
 {
 	CV_Assert(quad.size() == 4);
 
-	//// Find the quad boundaries 
-	//   
-	//auto xbounds = std::minmax_element(quad.begin(), quad.end(), [](const auto& p1, const auto& p2) {
-	//		return p1.x < p2.x;
-	//	});
-
-	//auto ybounds = std::minmax_element(quad.begin(), quad.end(), [](const auto& p1, const auto& p2) {
-	//		return p1.y < p2.y;
-	//	});
-
 	// Pick the topmost vertex as a starting point. Since we measure the angles from the vector pointing upwards from this point, 
 	// the angle corresponding to this vertex will be zero. And we must ensure that every next vertex we reach in a clockwise order
 	// is connected to the previous one. Therefore, the upwards vector must never point inside the quad. 
@@ -629,45 +619,15 @@ std::vector<cv::Point2f> DocumentScanner::arrangeVertices(const std::vector<cv::
 		}   // same angles
 		});
 
-	//std::vector<int> indices(quad.size());
-	//std::iota(indices.begin(), indices.end(), 0);
-	//std::sort(indices.begin(), indices.end(), [&angles](int idx1, int idx2) {
-	//		return angles[idx1] < angles[idx2];		// TODO: it doesn't handle the case when 3+ vertices lie on the same line
-	//	});
-
-
-	// Find the circular shift such that the top-left vertex is in the first place
-	//cv::Point corners[] = { { xbounds.first->x, ybounds.first->y }, 
-	//						{ xbounds.second->x, ybounds.first->y },
-	//						{ xbounds.second->x, ybounds.second->y },
-	//						{ xbounds.first->x, ybounds.second->y }	};
-	//int bestShift = 0;
-	//long long minDist = std::numeric_limits<long long>::max();	// min total distance to the corners
-	//for (int shift = 0; shift < quad.size(); ++shift)
-	//{
-	//	// Compute the distance to the corresponding corner points
-	//	long long dist = 0;
-	//	for (int i = 0; i < quad.size(); ++i)
-	//	{
-	//		cv::Point d = quad[indices[(i + shift) % quad.size()]] - corners[i];
-	//		dist += 1LL * d.x * d.x + 1LL * d.y * d.y;
-	//	}
-
-	//	// We want the total distance to the corresponding corners to be minimal
-	//	if (dist < minDist)
-	//	{
-	//		bestShift = shift;
-	//		minDist = dist;
-	//	}
-	//}	// for shift
 
 	// Find the best circular shift
 	int bestShift = 0;
-	long long sign[4][2] = { {+1, +1}, {-1, +1}, {-1, -1}, {+1, -1} };
+	long long sign[4][2] = { {+1, +1}, {-1, +1}, {-1, -1}, {+1, -1} };	// +1 - minimize, -1 - maximize
 	long long minDist = std::numeric_limits<long long>::max();	// min total distance to the corners
 	for (int shift = 0; shift < quad.size(); ++shift)
 	{
-		// Compute the distance to the corresponding corner points
+		// Compute the distances (positive or negative) to the top-left corner: a smaller distance from the right/bottom
+		// corresponds to a larger distance from the left/top 
 		long long d = 0;
 		for (int i = 0; i < quad.size(); ++i)
 		{
