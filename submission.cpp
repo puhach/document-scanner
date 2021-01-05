@@ -539,20 +539,32 @@ std::vector<cv::Point2f> DocumentScanner::arrangeVertices(const std::vector<cv::
 {
 	CV_Assert(quad.size() == 4);
 
-	// Find the quad boundaries 
-    
-	auto xbounds = std::minmax_element(quad.begin(), quad.end(), [](const auto& p1, const auto& p2) {
-			return p1.x < p2.x;
-		});
+	//// Find the quad boundaries 
+	//   
+	//auto xbounds = std::minmax_element(quad.begin(), quad.end(), [](const auto& p1, const auto& p2) {
+	//		return p1.x < p2.x;
+	//	});
 
-	auto ybounds = std::minmax_element(quad.begin(), quad.end(), [](const auto& p1, const auto& p2) {
+	//auto ybounds = std::minmax_element(quad.begin(), quad.end(), [](const auto& p1, const auto& p2) {
+	//		return p1.y < p2.y;
+	//	});
+
+	// Pick the topmost vertex as a starting point. Since we measure the angles from the vector pointing upwards from this point, 
+	// the angle corresponding to this vertex will be zero. And we must ensure that every next vertex we reach in a clockwise order
+	// is connected to the previous one. Therefore, the upwards vector must never point inside the quad. 
+	auto topmostIt = std::min_element(quad.begin(), quad.end(), [](const auto& p1, const auto& p2) {
 			return p1.y < p2.y;
 		});
 
+	// Compute distances (Manhattan) to all the vertices from the starting point
+	std::vector<int> dist(quad.size());
+	std::transform(quad.begin(), quad.end(), dist.begin(), [&p0 = *topmostIt](const auto& p) {
+		return abs(p.x - p0.x) + abs(p.y - p0.y);
+	});
 
 	// Compute angles between u0 pointing upwards from the topmost vertex and the vectors from the topmost vertex to each other vertex
 	std::vector<double> angles(quad.size());
-	std::transform(quad.begin(), quad.end(), angles.begin(), [&p0 = *ybounds.first, u0 = cv::Point(0, -1)](const auto& p) {
+	std::transform(quad.begin(), quad.end(), angles.begin(), [&p0 = *topmostIt, u0 = cv::Point(0, -1)](const auto& p) {
 		cv::Point u = p - p0;	// the vector from p0 to p
 
 		// Compute the dot product of u0 and u: u0.x*u.x+u0.y*u.y = |u0|*|u|*cos(angle)
@@ -575,36 +587,100 @@ std::vector<cv::Point2f> DocumentScanner::arrangeVertices(const std::vector<cv::
 	});	// transform
 
 
-	// Arrange the vertices in the clockwise order starting from the topmost vertex
+	// Find the angle to the most distant vertex
 	std::vector<int> indices(quad.size());
 	std::iota(indices.begin(), indices.end(), 0);
-	std::sort(indices.begin(), indices.end(), [&angles](int idx1, int idx2) {
-			return angles[idx1] < angles[idx2];		// TODO: it doesn't handle the case when 3+ vertices lie on the same line
+	double mostDistantAngle = accumulate(indices.begin(), indices.end(), 0.0,
+		[&angles, &dist, maxDist = *max_element(dist.begin(), dist.end())](double acc, int idx) {
+			return dist[idx] == maxDist ? std::max(acc, angles[idx]) : acc;
+		});
+
+	// Determine whether the angle to the most distant vertex is also the largest angle
+	bool largest = none_of(angles.begin(), angles.end(), [mostDistantAngle](double ang) {
+			return ang > mostDistantAngle;
 		});
 
 
+	// Arrange the vertices in the clockwise order starting from the topmost vertex
+	std::sort(indices.begin(), indices.end(), [&angles, mostDistantAngle, largest, &dist](int idx1, int idx2) {
+		double a1 = angles[idx1], a2 = angles[idx2];
+		if (a1 < a2)
+			return true;
+		else if (a1 > a2)
+			return false;
+		else // same angles
+		{
+			// Choose the closer one if the angle is less than the angle to the most distant vertex.
+			// Choose the distant one if the angle is greater than the angle to most distant vertex.
+			if (a1 < mostDistantAngle)
+				return dist[idx1] < dist[idx2];
+			else if (a1 > mostDistantAngle)
+				return dist[idx1] > dist[idx2];
+			else
+			{
+				// In case the angle to the vertex is the same as the angle to the most distant vertex, 
+				// pick the distant vertex first if there is no other vertex with a larger angle.
+				// Otherwise, pick the closer one.
+				if (largest)
+					return dist[idx1] > dist[idx2];
+				else
+					return dist[idx1] < dist[idx2];
+			}   // a1 == a2 == most distant angle
+		}   // same angles
+		});
+
+	//std::vector<int> indices(quad.size());
+	//std::iota(indices.begin(), indices.end(), 0);
+	//std::sort(indices.begin(), indices.end(), [&angles](int idx1, int idx2) {
+	//		return angles[idx1] < angles[idx2];		// TODO: it doesn't handle the case when 3+ vertices lie on the same line
+	//	});
+
+
 	// Find the circular shift such that the top-left vertex is in the first place
-	cv::Point corners[] = { { xbounds.first->x, ybounds.first->y }, 
-							{ xbounds.second->x, ybounds.first->y },
-							{ xbounds.second->x, ybounds.second->y },
-							{ xbounds.first->x, ybounds.second->y }	};
+	//cv::Point corners[] = { { xbounds.first->x, ybounds.first->y }, 
+	//						{ xbounds.second->x, ybounds.first->y },
+	//						{ xbounds.second->x, ybounds.second->y },
+	//						{ xbounds.first->x, ybounds.second->y }	};
+	//int bestShift = 0;
+	//long long minDist = std::numeric_limits<long long>::max();	// min total distance to the corners
+	//for (int shift = 0; shift < quad.size(); ++shift)
+	//{
+	//	// Compute the distance to the corresponding corner points
+	//	long long dist = 0;
+	//	for (int i = 0; i < quad.size(); ++i)
+	//	{
+	//		cv::Point d = quad[indices[(i + shift) % quad.size()]] - corners[i];
+	//		dist += 1LL * d.x * d.x + 1LL * d.y * d.y;
+	//	}
+
+	//	// We want the total distance to the corresponding corners to be minimal
+	//	if (dist < minDist)
+	//	{
+	//		bestShift = shift;
+	//		minDist = dist;
+	//	}
+	//}	// for shift
+
+	// Find the best circular shift
 	int bestShift = 0;
+	long long sign[4][2] = { {+1, +1}, {-1, +1}, {-1, -1}, {+1, -1} };
 	long long minDist = std::numeric_limits<long long>::max();	// min total distance to the corners
 	for (int shift = 0; shift < quad.size(); ++shift)
 	{
 		// Compute the distance to the corresponding corner points
-		long long dist = 0;
+		long long d = 0;
 		for (int i = 0; i < quad.size(); ++i)
 		{
-			cv::Point d = quad[indices[(i + shift) % quad.size()]] - corners[i];
-			dist += 1LL * d.x * d.x + 1LL * d.y * d.y;
+			auto shiftedIdx = indices[(i + shift) % quad.size()];
+			d += sign[i][0] * quad[shiftedIdx].x;
+			d += sign[i][1] * quad[shiftedIdx].y;
 		}
 
-		// We want the total distance to the corresponding corners to be minimal
-		if (dist < minDist)
+		// We want the total distance from vertices to the corresponding corners to be minimal
+		if (d < minDist)
 		{
 			bestShift = shift;
-			minDist = dist;
+			minDist = d;
 		}
 	}	// for shift
 
