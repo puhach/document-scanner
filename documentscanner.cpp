@@ -1,4 +1,11 @@
 #include "documentscanner.h"
+#include "abstractpapersheetdetector.h"
+
+#include <opencv2/highgui.hpp>
+#include <opencv2/imgproc.hpp>
+
+#include <algorithm>
+#include <numeric>
 
 
 DocumentScanner::DocumentScanner(const std::string& windowName, std::unique_ptr<AbstractPaperSheetDetector> paperDetector)

@@ -1,12 +1,13 @@
 #ifndef DOCUMENTSCANNER_H
 #define DOCUMENTSCANNER_H
 
+#include "ithreshpapersheetdetector.h"
+
 #include <opencv2/core.hpp>
 
 #include <string>
 #include <memory>
 #include <vector>
-
 
 
 // A document scanner class takes in an image of a document and performs perspective correction

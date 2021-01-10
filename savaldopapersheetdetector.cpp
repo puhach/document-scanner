@@ -1,5 +1,6 @@
 #include "savaldopapersheetdetector.h"
 
+#include <opencv2/imgproc.hpp>
 
 
 std::unique_ptr<AbstractQuadDetector> SavaldoPaperSheetDetector::createClone() const

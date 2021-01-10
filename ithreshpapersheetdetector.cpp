@@ -1,5 +1,11 @@
 #include "ithreshpapersheetdetector.h"
 
+#include <opencv2/imgproc.hpp>
+
+//constexpr IthreshPaperSheetDetector::IthreshPaperSheetDetector(int thresholdLevels)
+//	: thresholdLevels(thresholdLevels >= 1 && thresholdLevels <= 255 ? thresholdLevels : throw std::invalid_argument("The number of threshold levels must be in range 1..255."))
+//{
+//}
 
 std::unique_ptr<AbstractQuadDetector> IthreshPaperSheetDetector::createClone() const
 {

@@ -15,8 +15,9 @@
 class IthreshPaperSheetDetector : public AbstractPaperSheetDetector
 {
 public:
+	// constexpr constructors are implicitly inline
 	constexpr IthreshPaperSheetDetector(int thresholdLevels = 15)
-		: thresholdLevels(thresholdLevels>=1 && thresholdLevels<=255 ? thresholdLevels : throw std::invalid_argument("The number of threshold levels must be in range 1..255."))
+		: thresholdLevels(thresholdLevels >= 1 && thresholdLevels <= 255 ? thresholdLevels : throw std::invalid_argument("The number of threshold levels must be in range 1..255."))
 	{
 	}
 
