@@ -7,7 +7,7 @@
 #include <opencv2/core.hpp>
 
 #include <vector>
-
+#include <stdexcept>
 
 
 // A parent class for paper sheet detectors
@@ -46,7 +46,16 @@ public:
 	}
 
 protected:
-	constexpr AbstractPaperSheetDetector(double minAreaPct = 0.5, double maxAreaPct = 0.99, double approximationAccuracyPct = 0.02);
+
+	// Since constexpr constructors are implicitly inline, the definition is provided here to avoid linker errors (an inline function shall be defined 
+	// in every translation unit in which it is odr-used and shall have exactly the same definition in every case)
+	// https://stackoverflow.com/questions/16219711/undefined-symbols-for-constexpr-function
+	// https://stackoverflow.com/questions/27345284/is-it-possible-to-declare-constexpr-class-in-a-header-and-define-it-in-a-separat
+	constexpr AbstractPaperSheetDetector(double minAreaPct = 0.5, double maxAreaPct = 0.99, double approximationAccuracyPct = 0.02)
+		: minAreaPct(minAreaPct >= 0 && minAreaPct <= 1 ? minAreaPct : throw std::invalid_argument("Min area percentage must be in range 0..1."))
+		, maxAreaPct(maxAreaPct >= minAreaPct && maxAreaPct <= 1 ? maxAreaPct : throw std::invalid_argument("Max area percentage must be in range <min area percentage>..1"))
+		, approxAccuracyPct(approxAccuracyPct >= 0 ? approxAccuracyPct : throw std::invalid_argument("Approximation accuracy percentage can't be negative."))
+	{	}
 
 	// Restrict copy/move operations since this is a polymorphic type
 

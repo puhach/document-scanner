@@ -1,13 +1,14 @@
 #include "abstractpapersheetdetector.h"
 
+#include <opencv2/imgproc.hpp>
 
 
-constexpr AbstractPaperSheetDetector::AbstractPaperSheetDetector(double minAreaPct, double maxAreaPct, double approxAccuracyPct) 
-	: minAreaPct(minAreaPct>=0 && minAreaPct<=1 ? minAreaPct : throw std::invalid_argument("Min area percentage must be in range 0..1."))
-	, maxAreaPct(maxAreaPct>=minAreaPct && maxAreaPct<=1 ? maxAreaPct : throw std::invalid_argument("Max area percentage must be in range <min area percentage>..1"))
-	, approxAccuracyPct(approxAccuracyPct>=0 ? approxAccuracyPct : throw std::invalid_argument("Approximation accuracy percentage can't be negative."))
-{
-}
+//constexpr AbstractPaperSheetDetector::AbstractPaperSheetDetector(double minAreaPct, double maxAreaPct, double approxAccuracyPct) 
+//	: minAreaPct(minAreaPct>=0 && minAreaPct<=1 ? minAreaPct : throw std::invalid_argument("Min area percentage must be in range 0..1."))
+//	, maxAreaPct(maxAreaPct>=minAreaPct && maxAreaPct<=1 ? maxAreaPct : throw std::invalid_argument("Max area percentage must be in range <min area percentage>..1"))
+//	, approxAccuracyPct(approxAccuracyPct>=0 ? approxAccuracyPct : throw std::invalid_argument("Approximation accuracy percentage can't be negative."))
+//{
+//}
 
 std::vector<std::vector<cv::Point>> AbstractPaperSheetDetector::refineContours(const std::vector<std::vector<cv::Point>>& contours, const cv::Mat &image) const
 {
