@@ -22,7 +22,20 @@ find_package(OpenCV REQUIRED)
 
 include_directories(${OpenCV_INCLUDE_DIRS})
 
-add_executable(doscan submission.cpp)
+add_executable(doscan 
+	main.cpp 
+	abstractquaddetector.h 
+	abstractquaddetector.cpp 
+	abstractpapersheetdetector.h 
+	abstractpapersheetdetector.cpp 
+	ithreshpapersheetdetector.h
+	ithreshpapersheetdetector.cpp
+	savaldopapersheetdetector.h
+	savaldopapersheetdetector.cpp
+	documentscanner.h
+	documentscanner.cpp
+)
+
 target_link_libraries(doscan ${OpenCV_LIBS} )
   
 if(MSVC)
