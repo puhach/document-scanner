@@ -1,14 +1,9 @@
 #include <iostream>
 #include <string>
 #include <memory>
-//#include <vector>
-//#include <exception>
-//
+
 #include <opencv2/core.hpp>
-//#include <opencv2/imgproc.hpp>
 #include <opencv2/imgcodecs.hpp>
-//#include <opencv2/calib3d.hpp>
-//#include <opencv2/highgui.hpp>
 
 #include "documentscanner.h"
 #include "ithreshpapersheetdetector.h"
@@ -84,7 +79,7 @@ int main(int argc, char* argv[])
         
 		cv::Mat imgInput = cv::imread(inputFile, cv::IMREAD_COLOR);	// EXIF is important 
 		if (imgInput.empty())
-            throw std::runtime_error("Failed to load the input image from \"" + inputFile + "\". Make sure this file exists.");
+			throw std::runtime_error("Failed to load the input image from \"" + inputFile + "\". Make sure this file exists.");
 
         
 		// Deduce the width and height from the aspect ratio

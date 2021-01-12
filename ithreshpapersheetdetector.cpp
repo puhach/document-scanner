@@ -2,10 +2,6 @@
 
 #include <opencv2/imgproc.hpp>
 
-//constexpr IthreshPaperSheetDetector::IthreshPaperSheetDetector(int thresholdLevels)
-//	: thresholdLevels(thresholdLevels >= 1 && thresholdLevels <= 255 ? thresholdLevels : throw std::invalid_argument("The number of threshold levels must be in range 1..255."))
-//{
-//}
 
 std::unique_ptr<AbstractQuadDetector> IthreshPaperSheetDetector::createClone() const
 {
@@ -43,9 +39,9 @@ std::vector<std::vector<cv::Point>> IthreshPaperSheetDetector::detectCandidates(
 			cv::threshold(channel, channelBin, threshLevel * 255.0 / (this->thresholdLevels + 1.0), 255,
 				i == 1 ? cv::THRESH_BINARY_INV : cv::THRESH_BINARY);	// for a value channel use another threshold
 
-            // Remove small dark regions (holes) in the paper sheet			
+			// Remove small dark regions (holes) in the paper sheet			
 			cv::morphologyEx(channelBin, channelBin, cv::MORPH_CLOSE, cv::getStructuringElement(cv::MORPH_ELLIPSE, cv::Size(5, 5)));
-            //cv::dilate(channelBin, channelBin, cv::getStructuringElement(cv::MORPH_ELLIPSE, cv::Size(5, 5)));
+			//cv::dilate(channelBin, channelBin, cv::getStructuringElement(cv::MORPH_ELLIPSE, cv::Size(5, 5)));
             
 			double minVal, maxVal;
 			cv::minMaxLoc(channelBin, &minVal, &maxVal);

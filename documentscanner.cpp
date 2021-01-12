@@ -22,9 +22,9 @@ bool DocumentScanner::prepare(const cv::Mat& src, std::vector<cv::Point>& quad)
 	// Detect the paper sheet boundaries
 	this->bestQuad = this->paperDetector->detect(src);
 
-    // It would generally be better to use RAII to guarantee that mouse handling gets disabled even if an exception is raised, 
-    // but since the only function (except this one) where a user can click the window is display, it is easier just to disable 
-    // mouse handling there.
+	// It would generally be better to use RAII to guarantee that mouse handling gets disabled even if an exception is raised, 
+	// but since the only function (except this one) where a user can click the window is display, it is easier just to disable 
+	// mouse handling there.
 	//struct WindowRAII
 	//{
 	//	WindowRAII(const std::string &windowName, DocumentScanner *scanner)
@@ -68,7 +68,7 @@ cv::Mat DocumentScanner::rectify(const cv::Mat& src, std::vector<cv::Point>& qua
 {
 	CV_Assert(!src.empty());
 	CV_Assert(quad.size() == 4);
-    CV_Assert(width > 0 && height > 0);
+	CV_Assert(width > 0 && height > 0);
 
 	cv::namedWindow(this->windowName, cv::WINDOW_AUTOSIZE);
 
